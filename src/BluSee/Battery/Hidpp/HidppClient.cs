@@ -31,17 +31,23 @@ public sealed class HidppClient(HidppTransport transport)
     {
         var result = new List<HidppBatteryReading>();
 
-        // 1..6 = devices paired to a receiver; 0xFF = a device connected directly (e.g. Bluetooth),
-        // where there is no receiver and the device itself answers at the "receiver" index.
-        foreach (var index in (byte[])[1, 2, 3, 4, 5, 6, 0xFF])
+        // 1..6 = devices paired to a receiver. Probe battery directly with retries: a paired device
+        // may be asleep and miss the first request, so a one-shot connectivity gate would drop it.
+        for (byte index = 1; index <= 6; index++)
         {
             ct.ThrowIfCancellationRequested();
-
-            // Probe battery directly with retries: a paired device may be asleep and miss the first
-            // request. A cheap one-shot connectivity gate would wrongly drop such devices.
             var reading = await ReadDeviceAsync(index, ct);
             if (reading is not null)
                 result.Add(reading);
+        }
+
+        // 0xFF = a device connected directly (e.g. Bluetooth) with no receiver. Probe it only as a
+        // fallback — on a real receiver it would alias an already-listed slot and create duplicates.
+        if (result.Count == 0)
+        {
+            var direct = await ReadDeviceAsync(0xFF, ct);
+            if (direct is not null)
+                result.Add(direct);
         }
 
         return result;

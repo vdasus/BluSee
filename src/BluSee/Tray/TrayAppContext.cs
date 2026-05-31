@@ -14,11 +14,14 @@ public sealed class TrayAppContext : ApplicationContext
     private const int LowBatteryThreshold = 15;
 
     private readonly NotifyIcon _icon;
+    private readonly ContextMenuStrip _menu = new();
     private readonly TrayIconRenderer _renderer = new();
     private readonly BatteryMonitor _monitor;
     private readonly AutostartManager _autostart = new();
     private readonly SynchronizationContext _ui;
     private readonly ToolStripMenuItem _autostartItem;
+    private readonly ToolStripMenuItem _intervalItem;
+    private readonly ToolStripSeparator _deviceSeparator = new();
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly HashSet<string> _lowNotified = new(StringComparer.OrdinalIgnoreCase);
 
@@ -33,14 +36,24 @@ public sealed class TrayAppContext : ApplicationContext
             Checked = _autostart.IsEnabled(),
             CheckOnClick = true,
         };
+        _intervalItem = BuildIntervalMenu();
 
-        var menu = new ContextMenuStrip();
-        menu.Opening += (_, _) => ThemeMenu.Apply(menu, ThemeReader.IsLightTheme());
+        // Build the static part of the menu once. Only the device items (above _deviceSeparator) are
+        // rebuilt on each poll — re-adding Refresh/Exit/etc. every time duplicated them in the menu.
+        _menu.Items.Add(_deviceSeparator);
+        _menu.Items.Add(new ToolStripMenuItem("Refresh", null, OnRefresh));
+        _menu.Items.Add(_intervalItem);
+        _menu.Items.Add(_autostartItem);
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add(new ToolStripMenuItem("Exit", null, OnExit));
+        _menu.Opening += (_, _) => ThemeMenu.Apply(_menu, ThemeReader.IsLightTheme());
+        UpdateDeviceItems([]);
+
         _icon = new NotifyIcon
         {
             Text = "BluSee",
             Visible = true,
-            ContextMenuStrip = menu,
+            ContextMenuStrip = _menu,
         };
         _renderer.Apply(_icon, null, ThemeReader.IsLightTheme());
 
@@ -52,8 +65,6 @@ public sealed class TrayAppContext : ApplicationContext
         ];
         _monitor = new BatteryMonitor(providers, _settings.PollInterval);
         _monitor.Updated += OnMonitorUpdated;
-
-        BuildMenu([]);
         _monitor.Start();
     }
 
@@ -65,33 +76,32 @@ public sealed class TrayAppContext : ApplicationContext
         var lowest = BatteryMonitor.LowestPercent(devices);
         _renderer.Apply(_icon, lowest, ThemeReader.IsLightTheme());
         _icon.Text = Truncate(lowest is null ? "BluSee — no battery data" : $"BluSee — lowest {lowest}%");
-        BuildMenu(devices);
+        UpdateDeviceItems(devices);
         NotifyLowBattery(devices);
     }
 
-    private void BuildMenu(IReadOnlyList<DeviceBattery> devices)
+    /// <summary>Replace only the device entries (everything above <see cref="_deviceSeparator"/>).</summary>
+    private void UpdateDeviceItems(IReadOnlyList<DeviceBattery> devices)
     {
-        var menu = _icon.ContextMenuStrip!;
-        menu.Items.Clear();
+        while (_menu.Items.Count > 0 && _menu.Items[0] != _deviceSeparator)
+        {
+            var item = _menu.Items[0];
+            _menu.Items.RemoveAt(0);
+            item.Dispose();
+        }
 
+        var insertAt = 0;
         if (devices.Count == 0)
         {
-            menu.Items.Add(new ToolStripMenuItem("No devices") { Enabled = false });
+            _menu.Items.Insert(insertAt, new ToolStripMenuItem("No devices") { Enabled = false });
         }
         else
         {
             foreach (var d in devices)
-                menu.Items.Add(new ToolStripMenuItem(d.Display) { Enabled = false });
+                _menu.Items.Insert(insertAt++, new ToolStripMenuItem(d.Display) { Enabled = false });
         }
 
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("Refresh", null, OnRefresh));
-        menu.Items.Add(BuildIntervalMenu());
-        menu.Items.Add(_autostartItem);
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(new ToolStripMenuItem("Exit", null, OnExit));
-
-        ThemeMenu.Apply(menu, ThemeReader.IsLightTheme());
+        ThemeMenu.Apply(_menu, ThemeReader.IsLightTheme());
     }
 
     private ToolStripMenuItem BuildIntervalMenu()
@@ -117,6 +127,9 @@ public sealed class TrayAppContext : ApplicationContext
         _settings.PollIntervalMinutes = minutes;
         _settings.TrySave();
         _monitor.SetInterval(_settings.PollInterval);
+
+        foreach (var item in _intervalItem.DropDownItems.OfType<ToolStripMenuItem>())
+            item.Checked = item.Tag is int m && m == minutes;
     }
 
     private void NotifyLowBattery(IReadOnlyList<DeviceBattery> devices)
@@ -157,6 +170,7 @@ public sealed class TrayAppContext : ApplicationContext
         _monitor.Stop();
         _icon.Visible = false;
         _icon.Dispose();
+        _menu.Dispose();
         _renderer.Dispose();
         ExitThread();
     }

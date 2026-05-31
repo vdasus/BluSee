@@ -82,10 +82,14 @@ public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, Ti
         Updated?.Invoke(Current);
     }
 
-    /// <summary>Lowest battery across connected devices that report one (drives the tray icon).</summary>
+    /// <summary>
+    /// Lowest battery across devices that report one (drives the tray icon). Includes cached values
+    /// of sleeping wireless devices (IsConnected=false) — otherwise a dozing keyboard would drop out
+    /// of the icon even though its last known level still matters.
+    /// </summary>
     public static int? LowestPercent(IReadOnlyList<DeviceBattery> devices)
     {
-        var values = devices.Where(d => d is { HasBattery: true, IsConnected: true })
+        var values = devices.Where(d => d.HasBattery)
             .Select(d => d.BatteryPercent!.Value)
             .ToList();
         return values.Count == 0 ? null : values.Min();
