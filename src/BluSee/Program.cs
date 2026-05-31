@@ -1,4 +1,6 @@
+#if DEBUG
 using BluSee.Diagnostics;
+#endif
 using BluSee.Tray;
 
 namespace BluSee;
@@ -15,6 +17,8 @@ internal static class Program
         if (!isNew)
             return 0;
 
+#if DEBUG
+        // Diagnostic modes ship only in Debug builds; the released portable exe is tray-only.
         if (args.Contains("--diag", StringComparer.OrdinalIgnoreCase))
         {
             using var cts = new CancellationTokenSource();
@@ -28,6 +32,7 @@ internal static class Program
             await DiagnosticsRunner.StressRunAsync(cts.Token);
             return 0;
         }
+#endif
 
         // No await runs before this point, so we are still on the STA entry thread for the UI loop.
         ApplicationConfiguration.Initialize();

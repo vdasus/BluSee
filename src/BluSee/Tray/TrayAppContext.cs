@@ -31,6 +31,7 @@ public sealed class TrayAppContext : ApplicationContext
         };
 
         var menu = new ContextMenuStrip();
+        menu.Opening += (_, _) => ThemeMenu.Apply(menu, ThemeReader.IsLightTheme());
         _icon = new NotifyIcon
         {
             Text = "BluSee",
@@ -84,6 +85,8 @@ public sealed class TrayAppContext : ApplicationContext
         menu.Items.Add(_autostartItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Exit", null, OnExit));
+
+        ThemeMenu.Apply(menu, ThemeReader.IsLightTheme());
     }
 
     private void NotifyLowBattery(IReadOnlyList<DeviceBattery> devices)

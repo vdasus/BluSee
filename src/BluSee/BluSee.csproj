@@ -9,6 +9,9 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <AssemblyName>BluSee</AssemblyName>
+    <Version>0.1.0</Version>
 
     <!-- минимизация ресурсов (см. claudeplan.md) -->
     <InvariantGlobalization>true</InvariantGlobalization>
@@ -16,5 +19,10 @@
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     <DebugType Condition="'$(Configuration)'=='Release'">none</DebugType>
   </PropertyGroup>
+
+  <!-- Diagnostic-only code is excluded from the released (Release) portable exe. -->
+  <ItemGroup Condition="'$(Configuration)'=='Release'">
+    <Compile Remove="Diagnostics/**/*.cs" />
+  </ItemGroup>
 
 </Project>

@@ -166,7 +166,21 @@ Settings/
 </Project>
 ```
 
-Publish (portable, framework-dependent):
+Publish (portable, framework-dependent single-file, ~24.5 МБ, нужен .NET 10 Desktop Runtime):
 ```
-dotnet publish -c Release -p:PublishSingleFile=true --self-contained false
+dotnet publish -c Release -r win-x64 -p:SelfContained=false -p:PublishSingleFile=true
 ```
+Важно: использовать property `-p:SelfContained=false` (CLI-флаг `--self-contained false` с RID не
+подхватывается и собирает self-contained ~135 МБ). На не-Windows добавить `-p:EnableWindowsTargeting=true`.
+
+## Статус реализации
+- ✅ Этап 1 — диагностика; выяснено: Windows не отдаёт battery DEVPKEY → HID++ основной путь.
+- ✅ HID++ (`Battery/Hidpp/`): Win32 shared `CreateFile`, dual-collection (short/long), **ротация swId**
+  (без неё заряд подменялся длиной имени), UnifiedBattery `0x1004` (% = `reply[4]`), имена `0x0005`,
+  ретраи для спящих, кэш последнего значения. Проверено: мышь 95%, клава 80% стабильно.
+- ✅ Этап 2 — трей: NotifyIcon, меню, `PeriodicTimer` 10 мин, маршалинг, `DestroyIcon`, balloon <15%,
+  автозапуск HKCU, Mutex.
+- ✅ Тёмное/светлое меню (`Tray/ThemeMenu.cs`) по теме Win11.
+- ✅ Portable single-file publish; diag/stress только в DEBUG.
+- ⏳ Lightspeed `C539` (не в HID++-выборке `0xFF00` — отложено).
+- ⏳ Имя клавы иногда `MX Keys S` читается не сразу (спит) — кэш покрывает.
