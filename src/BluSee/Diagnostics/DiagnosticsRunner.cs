@@ -30,6 +30,58 @@ public static class DiagnosticsRunner
         }
     }
 
+    /// <summary>
+    /// Stress mode: repeatedly read battery + name for the known device indices, logging raw bytes and
+    /// parsed percent each iteration. Used to verify reply correlation is stable (no value flipping).
+    /// </summary>
+    public static async Task StressRunAsync(CancellationToken ct)
+    {
+        var logPath = Path.Combine(AppContext.BaseDirectory, "blusee-stress.log");
+        var original = Console.Out;
+        await using var file = new StreamWriter(logPath, append: false) { AutoFlush = true };
+        Console.SetOut(new TeeTextWriter(original, file));
+        try
+        {
+            Console.WriteLine($"== BluSee stress {DateTime.Now:O} ==");
+            var groups = await HidppTransport.FindReceiverGroupsAsync(ct);
+
+            for (var iter = 1; iter <= 10 && !ct.IsCancellationRequested; iter++)
+            {
+                Console.WriteLine($"-- iteration {iter} --");
+                foreach (var group in groups)
+                {
+                    await using var transport = await HidppTransport.OpenAsync(group, ct);
+                    if (transport is null || transport.VendorId != 0x046D)
+                        continue;
+
+                    var client = new HidppClient(transport);
+                    for (byte idx = 1; idx <= 2; idx++)
+                    {
+                        var gf = await client.DebugGetFeatureAsync(idx, 0x1004, ct);
+                        if (gf is null || gf[2] == 0xFF || gf[4] == 0)
+                        {
+                            Console.WriteLine($"  dev#{idx}: no UnifiedBattery");
+                            continue;
+                        }
+
+                        // Interleave a name read with the battery read — this is what exposed the
+                        // cross-request correlation bug; the parsed percent must stay constant.
+                        var call = await client.DebugCallAsync(idx, gf[4], 0x01, ct);
+                        var name = await client.ReadDeviceNameAsync(idx, ct);
+                        var raw = call is null ? "null" : Convert.ToHexString(call);
+                        var pct = call is null ? -1 : call[4];
+                        Console.WriteLine($"  dev#{idx} pct={pct} raw={raw} name='{name}'");
+                    }
+                }
+            }
+        }
+        finally
+        {
+            Console.SetOut(original);
+            Console.WriteLine($"Stress log written to: {logPath}");
+        }
+    }
+
     private static async Task RunCoreAsync(CancellationToken ct)
     {
         Console.WriteLine("== BluSee diagnostics ==");

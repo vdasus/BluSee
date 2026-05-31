@@ -22,6 +22,13 @@ internal static class Program
             return 0;
         }
 
+        if (args.Contains("--stress", StringComparer.OrdinalIgnoreCase))
+        {
+            using var cts = new CancellationTokenSource();
+            await DiagnosticsRunner.StressRunAsync(cts.Token);
+            return 0;
+        }
+
         // No await runs before this point, so we are still on the STA entry thread for the UI loop.
         ApplicationConfiguration.Initialize();
         Application.Run(new TrayAppContext());
