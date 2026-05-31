@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Windowless tray app. Diagnostics (--diag) still write to blusee-diag.log next to the exe. -->
+    <!-- Windowless tray app. Diagnostic mode still writes blusee-diag.log next to the exe. -->
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>

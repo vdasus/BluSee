@@ -9,7 +9,7 @@ namespace BluSee.Tray;
 /// HICON via <see cref="Bitmap.GetHicon"/>, which must be released with DestroyIcon — otherwise the
 /// process leaks GDI handles over its lifetime. We keep the previous handle and free it on swap.
 /// </summary>
-public sealed class TrayIconRenderer : IDisposable
+public sealed partial class TrayIconRenderer : IDisposable
 {
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
