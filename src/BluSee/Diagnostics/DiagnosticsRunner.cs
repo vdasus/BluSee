@@ -135,6 +135,35 @@ public static class DiagnosticsRunner
         Console.WriteLine(new string('=', 60));
         Console.WriteLine("HID++ probe (Logitech receivers):");
         await ProbeHidppAsync(ct);
+
+        // 6) BLE GATT probe (path for devices connected directly over Bluetooth).
+        Console.WriteLine(new string('=', 60));
+        Console.WriteLine("BLE probe (paired Bluetooth LE devices):");
+        await ProbeBleAsync(ct);
+    }
+
+    private static async Task ProbeBleAsync(CancellationToken ct)
+    {
+        var selector = Windows.Devices.Bluetooth.BluetoothLEDevice.GetDeviceSelectorFromPairingState(true);
+        var paired = await DeviceInformation.FindAllAsync(selector).AsTask(ct);
+        Console.WriteLine($"  paired BLE devices: {paired.Count}");
+        foreach (var info in paired)
+            Console.WriteLine($"    {(string.IsNullOrWhiteSpace(info.Name) ? "(no name)" : info.Name)}  {info.Id}");
+        Console.WriteLine();
+
+        try
+        {
+            var readings = await new BleGattProvider().GetDevicesAsync(ct);
+            if (readings.Count == 0)
+                Console.WriteLine("  (no GATT battery readings — device may lack 0x180F or be unreachable)");
+            else
+                foreach (var d in readings)
+                    Console.WriteLine($"  [{d.Source}] {d.Display}  connected={d.IsConnected}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  BLE probe failed: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private static async Task ProbeHidppAsync(CancellationToken ct)
@@ -162,8 +191,8 @@ public static class DiagnosticsRunner
                 var client = new HidppClient(transport);
 
                 // Per device index: ping, then immediately dump battery feature resolution + call.
-                // Inline so connected devices (1,2) print before the slow no-reply indices (3..6).
-                for (byte index = 1; index <= 6; index++)
+                // 1..6 = receiver-paired devices; 0xFF = a directly-connected (e.g. Bluetooth) device.
+                foreach (var index in (byte[])[1, 2, 3, 4, 5, 6, 0xFF])
                 {
                     var raw = await client.DebugRootPingAsync(index, ct);
                     Console.WriteLine($"    dev#{index} rootPing: {(raw is null ? "(no reply)" : Hex(raw))}");

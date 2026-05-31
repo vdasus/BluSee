@@ -30,7 +30,10 @@ public sealed class HidppClient(HidppTransport transport)
     public async Task<IReadOnlyList<HidppBatteryReading>> ReadAllAsync(CancellationToken ct)
     {
         var result = new List<HidppBatteryReading>();
-        for (byte index = 1; index <= 6; index++)
+
+        // 1..6 = devices paired to a receiver; 0xFF = a device connected directly (e.g. Bluetooth),
+        // where there is no receiver and the device itself answers at the "receiver" index.
+        foreach (var index in (byte[])[1, 2, 3, 4, 5, 6, 0xFF])
         {
             ct.ThrowIfCancellationRequested();
 
