@@ -8,8 +8,20 @@
 - **Распространение:** запуск **без прав администратора**, **portable**. Допустим
   framework-dependent (нужен установленный .NET 10 Desktop Runtime), остальное — portable.
 - **Источники заряда (multi-source):** не только Bluetooth, но и устройства через USB-приёмник
-  (Logi Bolt / Unifying). Дешёвый путь — единое PnP-свойство ОС для всех HID-узлов (покрывает BT и
-  Bolt, если Windows кэширует заряд). Проприетарный HID++ напрямую — опциональный stretch-провайдер.
+  (Logi Bolt / Unifying / LIGHTSPEED). PnP-свойство ОС проверено на железе пользователя —
+  **Windows заряд НЕ публикует** (виден только в Logi Options+). Поэтому для Logitech-устройств
+  **HID++ — основной путь** (не опциональный). PnP-провайдер остаётся для устройств, где ОС всё же
+  кэширует заряд; BLE GATT — для BLE.
+
+## Факты железа (диагностика Этапа 1)
+- Нет ни одного devnode с battery DEVPKEY (`{104EA319-...}`) — исчерпывающий проход дал 0.
+- Устройства ввода — через Logitech-приёмники: `046D:C548` (Bolt), `046D:C539` (LIGHTSPEED).
+- HID++ канал = vendor-defined коллекция, usage page `0xFF00` (интерфейс `MI_02`, short report
+  `0x10`/usage `0x0001`, long report `0x11`/usage `0x0002`).
+- Доступ к vendor-коллекции: WinRT `HidDevice` даёт `UnauthorizedAccessException` (узкий sharing,
+  Logitech-софт держит хэндл). Решение — **Win32 `CreateFile` с `FILE_SHARE_READ|WRITE`** (P/Invoke,
+  `NativeHid.cs`) + async `FileStream` для read/write report'ов. Перечисление интерфейсов остаётся
+  через WinRT `HidDevice.GetDeviceSelector` (usage 0xFF00, usageId 0x0001 short + 0x0002 long).
 
 ---
 

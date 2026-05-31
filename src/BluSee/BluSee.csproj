@@ -1,13 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Stage 1: Exe (console needed for diag mode). Switch to WinExe in Stage 2 (windowless tray). -->
-    <OutputType>Exe</OutputType>
+    <!-- Windowless tray app. Diagnostics (--diag) still write to blusee-diag.log next to the exe. -->
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
     <!-- минимизация ресурсов (см. claudeplan.md) -->
     <InvariantGlobalization>true</InvariantGlobalization>

@@ -55,14 +55,17 @@ public sealed class PnpBatteryProvider : IBatteryProvider
 
     /// <summary>
     /// Enumerate Kind=Device devnodes that carry the battery DEVPKEY. The battery property lives on
-    /// the device node (HID collection / Bluetooth device), not on AEPs or device interfaces.
-    /// Covers Logi Bolt / Unifying children (HID class) and Bluetooth devices.
+    /// the device node (HID collection / Bluetooth / mouse / keyboard), not on AEPs or interfaces.
+    /// Covers Logi Bolt / Unifying children and Bluetooth devices.
     /// </summary>
     internal static async Task<IReadOnlyList<DeviceInformation>> EnumerateAsync(CancellationToken ct)
     {
-        var result = new List<DeviceInformation>();
+        // Mouse and keyboard function devnodes often hold battery, under their own setup classes.
+        const string miceClass = "{4d36e96f-e325-11ce-bfc1-08002be10318}";
+        const string keyboardClass = "{4d36e96b-e325-11ce-bfc1-08002be10318}";
 
-        foreach (var classGuid in (string[])[HidClass, BluetoothClass])
+        var result = new List<DeviceInformation>();
+        foreach (var classGuid in (string[])[HidClass, BluetoothClass, miceClass, keyboardClass])
         {
             ct.ThrowIfCancellationRequested();
             var selector = $"System.Devices.ClassGuid:=\"{classGuid}\"";
@@ -73,5 +76,17 @@ public sealed class PnpBatteryProvider : IBatteryProvider
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Exhaustive sweep: every Kind=Device node with battery keys requested. Diagnostic-only and slow;
+    /// used to settle definitively whether Windows exposes a battery DEVPKEY anywhere on this machine.
+    /// </summary>
+    internal static async Task<IReadOnlyList<DeviceInformation>> EnumerateAllAsync(CancellationToken ct)
+    {
+        var nodes = await DeviceInformation
+            .FindAllAsync(string.Empty, DeviceProperties.Requested, DeviceInformationKind.Device)
+            .AsTask(ct);
+        return nodes;
     }
 }

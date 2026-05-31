@@ -1,4 +1,5 @@
 using BluSee.Battery;
+using BluSee.Battery.Hidpp;
 using Windows.Devices.Enumeration;
 
 namespace BluSee.Diagnostics;
@@ -13,11 +14,29 @@ public static class DiagnosticsRunner
 
     public static async Task RunAsync(CancellationToken ct)
     {
+        // Tee output to a log file so the full run survives without racing the console buffer.
+        var logPath = Path.Combine(AppContext.BaseDirectory, "blusee-diag.log");
+        var original = Console.Out;
+        await using var file = new StreamWriter(logPath, append: false) { AutoFlush = true };
+        Console.SetOut(new TeeTextWriter(original, file));
+        try
+        {
+            await RunCoreAsync(ct);
+        }
+        finally
+        {
+            Console.SetOut(original);
+            Console.WriteLine($"Full log written to: {logPath}");
+        }
+    }
+
+    private static async Task RunCoreAsync(CancellationToken ct)
+    {
         Console.WriteLine("== BluSee diagnostics ==");
-        Console.WriteLine("Enumerating HID + Bluetooth device nodes (Kind=Device)...");
+        Console.WriteLine("Exhaustive sweep of ALL device nodes (Kind=Device)...");
         Console.WriteLine();
 
-        var devices = await PnpBatteryProvider.EnumerateAsync(ct);
+        var devices = await PnpBatteryProvider.EnumerateAllAsync(ct);
         Console.WriteLine($"Found {devices.Count} device nodes.");
         Console.WriteLine();
 
@@ -39,10 +58,10 @@ public static class DiagnosticsRunner
         foreach (var info in devices.Where(IsLikelyInput).Where(d => !HasBatteryKey(d)))
             DumpFull(info);
 
-        // 3) Compact line list of everything else (name + instance id + battery flag).
+        // 3) Compact line list of relevant nodes (battery or likely input) — name + id + flag.
         Console.WriteLine(new string('=', 60));
-        Console.WriteLine("ALL NODES (compact):");
-        foreach (var info in devices)
+        Console.WriteLine("RELEVANT NODES (compact):");
+        foreach (var info in devices.Where(d => HasBatteryKey(d) || IsLikelyInput(d)))
         {
             var name = string.IsNullOrWhiteSpace(info.Name) ? "(no name)" : info.Name;
             var battery = HasBatteryKey(info) ? "[BATTERY]" : "         ";
@@ -50,7 +69,7 @@ public static class DiagnosticsRunner
             Console.WriteLine($"  {battery} {name,-28} {iid}");
         }
 
-        // 4) Parsed result via the provider.
+        // 4) Parsed result via the PnP provider.
         Console.WriteLine(new string('=', 60));
         Console.WriteLine("Parsed battery results (PnP provider):");
         var parsed = await new PnpBatteryProvider().GetDevicesAsync(ct);
@@ -59,7 +78,76 @@ public static class DiagnosticsRunner
         else
             foreach (var d in parsed)
                 Console.WriteLine($"  [{d.Transport}] {d.Display}  connected={d.IsConnected}");
+
+        // 5) HID++ probe (primary path for Logitech receivers).
+        Console.WriteLine(new string('=', 60));
+        Console.WriteLine("HID++ probe (Logitech receivers):");
+        await ProbeHidppAsync(ct);
     }
+
+    private static async Task ProbeHidppAsync(CancellationToken ct)
+    {
+        var groups = await HidppTransport.FindReceiverGroupsAsync(ct);
+        Console.WriteLine($"  HID++ receivers found: {groups.Count}");
+        Console.WriteLine();
+
+        foreach (var group in groups)
+        {
+            ct.ThrowIfCancellationRequested();
+            Console.WriteLine($"  receiver {group.Key} ({group.InterfacePaths.Count} collections)");
+
+            HidppTransport? transport = null;
+            try
+            {
+                transport = await HidppTransport.OpenAsync(group, ct);
+                if (transport is null)
+                {
+                    Console.WriteLine("    open FAILED (busy/denied — Logitech software may hold it exclusively)");
+                    continue;
+                }
+
+                Console.WriteLine($"    opened: VID=0x{transport.VendorId:X4} PID=0x{transport.ProductId:X4}");
+                var client = new HidppClient(transport);
+
+                // Per device index: ping, then immediately dump battery feature resolution + call.
+                // Inline so connected devices (1,2) print before the slow no-reply indices (3..6).
+                for (byte index = 1; index <= 6; index++)
+                {
+                    var raw = await client.DebugRootPingAsync(index, ct);
+                    Console.WriteLine($"    dev#{index} rootPing: {(raw is null ? "(no reply)" : Hex(raw))}");
+                    Console.Out.Flush();
+                    if (raw is null)
+                        continue;
+
+                    foreach (var feature in (ushort[])[0x1004, 0x1000])
+                    {
+                        var getFeat = await client.DebugGetFeatureAsync(index, feature, ct);
+                        Console.WriteLine($"      getFeature(0x{feature:X4}): {(getFeat is null ? "(no reply)" : Hex(getFeat))}");
+                        if (getFeat is null || getFeat[2] == 0xFF || getFeat[4] == 0)
+                            continue;
+
+                        var funcId = feature == 0x1004 ? (byte)0x01 : (byte)0x00;
+                        var call = await client.DebugCallAsync(index, getFeat[4], funcId, ct);
+                        Console.WriteLine($"      call(0x{feature:X4} fn{funcId}): {(call is null ? "(no reply)" : Hex(call))}");
+                        Console.Out.Flush();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"    probe error: {ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                if (transport is not null)
+                    await transport.DisposeAsync();
+            }
+
+            Console.WriteLine();
+        }
+    }
+
+    private static string Hex(byte[] b) => Convert.ToHexString(b);
 
     private static bool HasBatteryKey(DeviceInformation info)
         => info.Properties.Any(p =>
