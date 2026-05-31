@@ -1,7 +1,9 @@
+using System.Text;
+
 namespace BluSee.Battery.Hidpp;
 
 /// <summary>Battery reading for one device behind a receiver, via HID++ 2.0 feature calls.</summary>
-public sealed record HidppBatteryReading(byte DeviceIndex, int Percent, ushort Feature);
+public sealed record HidppBatteryReading(byte DeviceIndex, int Percent, ushort Feature, string? Name);
 
 /// <summary>
 /// Minimal HID++ 2.0 client: resolves features through the root feature (0x0000) and reads battery
@@ -12,6 +14,7 @@ public sealed class HidppClient(HidppTransport transport)
     private const byte SoftwareId = 0x05; // non-zero request tag (1..15) to correlate replies
     private const byte RootFeatureIndex = 0x00;
     private const ushort FeatureSet = 0x0001;
+    private const ushort FeatureDeviceName = 0x0005;
     private const ushort FeatureUnifiedBattery = 0x1004;
     private const ushort FeatureBatteryStatus = 0x1000;
     private const byte ErrorIndex = 0xFF;
@@ -52,11 +55,57 @@ public sealed class HidppClient(HidppTransport transport)
             {
                 var percent = await ReadPercentAsync(deviceIndex, featureIndex.Value, feature, ct);
                 if (percent is not null)
-                    return new HidppBatteryReading(deviceIndex, percent.Value, feature);
+                {
+                    var name = await ReadDeviceNameAsync(deviceIndex, ct);
+                    return new HidppBatteryReading(deviceIndex, percent.Value, feature, name);
+                }
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Read the friendly device name via DeviceNameAndType (0x0005): getCount (fn0) then getName
+    /// (fn1) in 15-char chunks. Best-effort — returns null if the feature is absent or errors.
+    /// </summary>
+    public async Task<string?> ReadDeviceNameAsync(byte deviceIndex, CancellationToken ct)
+    {
+        var featureIndex = await GetFeatureIndexAsync(deviceIndex, FeatureDeviceName, ct);
+        if (featureIndex is null or 0)
+            return null;
+
+        var countReply = await CallAsync(deviceIndex, featureIndex.Value, funcId: 0x00, p0: 0, ct);
+        if (countReply is null || IsError(countReply, deviceIndex))
+            return null;
+
+        int count = countReply[4];
+        if (count is <= 0 or > 64)
+            return null;
+
+        var name = new StringBuilder(count);
+        for (byte charIndex = 0; name.Length < count; charIndex += 15)
+        {
+            var chunk = await CallAsync(deviceIndex, featureIndex.Value, funcId: 0x01, charIndex, ct);
+            if (chunk is null || IsError(chunk, deviceIndex))
+                break;
+
+            // ASCII chars start at param byte 4; stop at NUL or the reported length.
+            var added = 0;
+            for (var i = 4; i < chunk.Length && name.Length < count; i++)
+            {
+                if (chunk[i] == 0)
+                    break;
+                name.Append((char)chunk[i]);
+                added++;
+            }
+
+            if (added == 0)
+                break; // no progress — avoid an infinite loop
+        }
+
+        var text = name.ToString().Trim();
+        return text.Length == 0 ? null : text;
     }
 
     /// <summary>Diagnostic: raw root.getFeature(IFeatureSet 0x0001) reply for a device index.</summary>
@@ -100,9 +149,8 @@ public sealed class HidppClient(HidppTransport transport)
     {
         // 0x1004 get_status = function 0x01; 0x1000 get_battery = function 0x00.
         var funcId = feature == FeatureUnifiedBattery ? (byte)0x01 : (byte)0x00;
-        var frame = LongFrame(deviceIndex, featureIndex, funcId);
 
-        var reply = await transport.RequestAsync(frame, r => Matches(r, deviceIndex, featureIndex), Timeout, ct);
+        var reply = await CallAsync(deviceIndex, featureIndex, funcId, p0: 0, ct);
         if (reply is null || IsError(reply, deviceIndex))
             return null;
 
@@ -110,6 +158,11 @@ public sealed class HidppClient(HidppTransport transport)
         var percent = reply[4];
         return percent is >= 0 and <= 100 ? percent : null;
     }
+
+    /// <summary>Call a feature function and await the correlated reply.</summary>
+    private Task<byte[]?> CallAsync(byte deviceIndex, byte featureIndex, byte funcId, byte p0, CancellationToken ct)
+        => transport.RequestAsync(LongFrame(deviceIndex, featureIndex, funcId, p0),
+            r => Matches(r, deviceIndex, featureIndex), Timeout, ct);
 
     // Long HID++ frame (report 0x11, 20 bytes): id, deviceIndex, featureIndex, (funcId<<4)|swId, 16 params.
     private static byte[] LongFrame(byte deviceIndex, byte featureIndex, byte funcId, byte p0 = 0, byte p1 = 0)

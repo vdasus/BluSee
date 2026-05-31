@@ -31,7 +31,7 @@ public sealed class HidppBatteryProvider : IBatteryProvider
             {
                 result.Add(new DeviceBattery(
                     Id: $"{group.Key}#dev{reading.DeviceIndex}",
-                    Name: $"Logitech 0x{transport.ProductId:X4} #{reading.DeviceIndex}",
+                    Name: reading.Name ?? $"Logitech 0x{transport.ProductId:X4} #{reading.DeviceIndex}",
                     Transport: DeviceTransport.UsbReceiver,
                     BatteryPercent: reading.Percent,
                     IsConnected: true,
