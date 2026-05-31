@@ -1,5 +1,6 @@
 using BluSee.Battery;
 using BluSee.Monitoring;
+using BluSee.Settings;
 using BluSee.Startup;
 
 namespace BluSee.Tray;
@@ -18,7 +19,10 @@ public sealed class TrayAppContext : ApplicationContext
     private readonly AutostartManager _autostart = new();
     private readonly SynchronizationContext _ui;
     private readonly ToolStripMenuItem _autostartItem;
+    private readonly AppSettings _settings = AppSettings.Load();
     private readonly HashSet<string> _lowNotified = new(StringComparer.OrdinalIgnoreCase);
+
+    private static readonly int[] IntervalChoices = [5, 10, 15, 30, 60];
 
     public TrayAppContext()
     {
@@ -46,7 +50,7 @@ public sealed class TrayAppContext : ApplicationContext
             new PnpBatteryProvider(),
             new BleGattProvider(),
         ];
-        _monitor = new BatteryMonitor(providers, TimeSpan.FromMinutes(10));
+        _monitor = new BatteryMonitor(providers, _settings.PollInterval);
         _monitor.Updated += OnMonitorUpdated;
 
         BuildMenu([]);
@@ -82,11 +86,37 @@ public sealed class TrayAppContext : ApplicationContext
 
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Refresh", null, OnRefresh));
+        menu.Items.Add(BuildIntervalMenu());
         menu.Items.Add(_autostartItem);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Exit", null, OnExit));
 
         ThemeMenu.Apply(menu, ThemeReader.IsLightTheme());
+    }
+
+    private ToolStripMenuItem BuildIntervalMenu()
+    {
+        var root = new ToolStripMenuItem("Poll interval");
+        foreach (var minutes in IntervalChoices)
+        {
+            root.DropDownItems.Add(new ToolStripMenuItem($"{minutes} min", null, OnSelectInterval)
+            {
+                Tag = minutes,
+                Checked = minutes == _settings.PollIntervalMinutes,
+            });
+        }
+
+        return root;
+    }
+
+    private void OnSelectInterval(object? sender, EventArgs e)
+    {
+        if (sender is not ToolStripMenuItem { Tag: int minutes })
+            return;
+
+        _settings.PollIntervalMinutes = minutes;
+        _settings.TrySave();
+        _monitor.SetInterval(_settings.PollInterval);
     }
 
     private void NotifyLowBattery(IReadOnlyList<DeviceBattery> devices)

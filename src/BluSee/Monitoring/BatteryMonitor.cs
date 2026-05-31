@@ -10,6 +10,14 @@ namespace BluSee.Monitoring;
 public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, TimeSpan interval)
 {
     private readonly CancellationTokenSource _cts = new();
+    private PeriodicTimer? _timer;
+
+    /// <summary>Change the poll cadence on the fly (applies to the running timer).</summary>
+    public void SetInterval(TimeSpan value)
+    {
+        if (_timer is not null)
+            _timer.Period = value;
+    }
 
     /// <summary>Latest merged snapshot. Replaced on every refresh.</summary>
     public IReadOnlyList<DeviceBattery> Current { get; private set; } = [];
@@ -27,16 +35,20 @@ public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, Ti
 
     private async Task RunAsync(CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(interval);
+        _timer = new PeriodicTimer(interval);
         try
         {
             await RefreshAsync(ct); // first reading right away
-            while (await timer.WaitForNextTickAsync(ct))
+            while (await _timer.WaitForNextTickAsync(ct))
                 await RefreshAsync(ct);
         }
         catch (OperationCanceledException)
         {
             // stopped
+        }
+        finally
+        {
+            _timer.Dispose();
         }
     }
 
