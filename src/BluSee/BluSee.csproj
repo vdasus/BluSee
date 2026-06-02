@@ -12,6 +12,8 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <AssemblyName>BluSee</AssemblyName>
     <Version>0.1.0</Version>
+    <!-- Win32 icon resource embedded in the exe (shown in File Explorer). -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
 
     <!-- минимизация ресурсов (см. claudeplan.md) -->
     <InvariantGlobalization>true</InvariantGlobalization>
