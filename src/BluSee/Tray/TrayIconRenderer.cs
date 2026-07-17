@@ -1,5 +1,4 @@
 using System.Drawing.Drawing2D;
-using System.Drawing.Text;
 using System.Runtime.InteropServices;
 
 namespace BluSee.Tray;
@@ -28,7 +27,6 @@ public sealed partial class TrayIconRenderer : IDisposable
         using (var g = Graphics.FromImage(bitmap))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
             g.Clear(Color.Transparent);
             Draw(g, dimension, percent, lightTheme);
         }
@@ -56,35 +54,28 @@ public sealed partial class TrayIconRenderer : IDisposable
             _ => lightTheme ? Color.FromArgb(0x0E, 0x70, 0x0E) : Color.FromArgb(0x8C, 0xEC, 0x6F), // green
         };
 
-        var font = FitFont(g, text, dimension);
+        // Font-size based drawing wastes ~35% of the box on line spacing (ascent/descent), which is
+        // why the digits looked small. Instead take the actual glyph outline, measure its true
+        // bounds and scale it to fill the icon almost edge to edge.
+        using var path = new GraphicsPath();
+        using (var family = new FontFamily("Segoe UI"))
+            path.AddString(text, family, (int)FontStyle.Bold, dimension, PointF.Empty, StringFormat.GenericTypographic);
+
+        var bounds = path.GetBounds();
+        if (bounds.Width <= 0f || bounds.Height <= 0f)
+            return;
+
+        var target = dimension - 1f;
+        var scale = Math.Min(target / bounds.Width, target / bounds.Height);
+        using var transform = new Matrix();
+        transform.Translate(
+            (dimension - bounds.Width * scale) / 2f - bounds.X * scale,
+            (dimension - bounds.Height * scale) / 2f - bounds.Y * scale);
+        transform.Scale(scale, scale, MatrixOrder.Prepend);
+        path.Transform(transform);
+
         using var brush = new SolidBrush(color);
-        using var format = new StringFormat
-        {
-            Alignment = StringAlignment.Center,
-            LineAlignment = StringAlignment.Center,
-        };
-        g.DrawString(text, font, brush, new RectangleF(0, 0, dimension, dimension), format);
-        font.Dispose();
-    }
-
-    /// <summary>
-    /// Largest bold font whose glyphs still fit the icon box. Start big for punch, then shrink until
-    /// both digits fit the width — otherwise a wide value like "70" gets clipped on a 16px icon.
-    /// </summary>
-    private static Font FitFont(Graphics g, string text, int dimension)
-    {
-        var size = dimension * 0.80f;
-        while (size > dimension * 0.4f)
-        {
-            var font = new Font("Segoe UI", size, FontStyle.Bold, GraphicsUnit.Pixel);
-            var bounds = g.MeasureString(text, font);
-            if (bounds.Width <= dimension && bounds.Height <= dimension)
-                return font;
-            font.Dispose();
-            size -= 1f;
-        }
-
-        return new Font("Segoe UI", dimension * 0.4f, FontStyle.Bold, GraphicsUnit.Pixel);
+        g.FillPath(brush, path);
     }
 
     public void Dispose()
