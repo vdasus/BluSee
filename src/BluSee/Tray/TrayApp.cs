@@ -105,6 +105,8 @@ public sealed class TrayApp : IDisposable
             Native.AppendMenuW(menu, Native.MF_STRING | autostartCheck, CmdAutostart, "Start with Windows");
             Native.AppendMenuW(menu, Native.MF_SEPARATOR, 0, null);
             Native.AppendMenuW(menu, Native.MF_STRING, CmdExit, "Exit");
+            Native.AppendMenuW(menu, Native.MF_SEPARATOR, 0, null);
+            Native.AppendMenuW(menu, Native.MF_STRING, 0, $"BluSee v{AppVersion}");
 
             // Required for tray menus: without foreground status the menu will not dismiss on an
             // outside click. The WM_NULL post afterwards is the classic KB135788 companion fix.
@@ -179,6 +181,9 @@ public sealed class TrayApp : IDisposable
     }
 
     private static string Truncate(string text) => text.Length <= 63 ? text : text[..63];
+
+    /// <summary>Three-part app version (from AssemblyVersion), shown at the bottom of the menu.</summary>
+    private static string AppVersion => typeof(TrayApp).Assembly.GetName().Version?.ToString(3) ?? "?";
 
     public void Dispose()
     {
