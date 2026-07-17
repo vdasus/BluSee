@@ -1,49 +1,43 @@
+using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
+using BluSee.Tray.Win32;
 
 namespace BluSee.Tray;
 
 /// <summary>
 /// Generates the tray icon on the fly from the current battery percent. Each render allocates an
 /// HICON via <see cref="Bitmap.GetHicon"/>, which must be released with DestroyIcon — otherwise the
-/// process leaks GDI handles over its lifetime. We keep the previous handle and free it on swap.
+/// process leaks GDI handles over its lifetime. The shell copies the icon on Shell_NotifyIcon, so
+/// the previous handle is freed on the next render.
 /// </summary>
-public sealed partial class TrayIconRenderer : IDisposable
+public sealed class TrayIconRenderer : IDisposable
 {
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool DestroyIcon(IntPtr handle);
+    private nint _previousHandle;
 
-    private Icon? _previousIcon;
-    private IntPtr _previousHandle;
-
-    /// <summary>Render the percent into <paramref name="target"/>'s icon, freeing the previous one.</summary>
-    public void Apply(NotifyIcon target, int? percent, bool lightTheme)
+    /// <summary>
+    /// Renders the percent into a small icon. <paramref name="scale"/> (0..1] shrinks the digits
+    /// within the fixed icon box, centered. The handle stays valid until the next call.
+    /// </summary>
+    public nint Render(int? percent, bool lightTheme, float scale = 1f)
     {
-        var size = SystemInformation.SmallIconSize;
-        var dimension = Math.Max(16, size.Width);
+        var dimension = Math.Max(16, Native.GetSystemMetrics(Native.SM_CXSMICON));
 
         using var bitmap = new Bitmap(dimension, dimension);
         using (var g = Graphics.FromImage(bitmap))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
-            Draw(g, dimension, percent, lightTheme);
+            Draw(g, dimension, percent, lightTheme, scale);
         }
 
         var handle = bitmap.GetHicon();
-        var icon = Icon.FromHandle(handle);
-        target.Icon = icon;
-
-        // Free the icon/handle from the previous render now that the new one is installed.
-        _previousIcon?.Dispose();
-        if (_previousHandle != IntPtr.Zero)
-            DestroyIcon(_previousHandle);
-        _previousIcon = icon;
+        if (_previousHandle != 0)
+            Native.DestroyIcon(_previousHandle);
         _previousHandle = handle;
+        return handle;
     }
 
-    private static void Draw(Graphics g, int dimension, int? percent, bool lightTheme)
+    private static void Draw(Graphics g, int dimension, int? percent, bool lightTheme, float userScale)
     {
         var text = percent is null ? "?" : percent.Value >= 100 ? "F" : percent.Value.ToString();
         var color = percent switch
@@ -65,7 +59,7 @@ public sealed partial class TrayIconRenderer : IDisposable
         if (bounds.Width <= 0f || bounds.Height <= 0f)
             return;
 
-        var target = dimension - 1f;
+        var target = (dimension - 1f) * userScale;
         var scale = Math.Min(target / bounds.Width, target / bounds.Height);
         using var transform = new Matrix();
         transform.Translate(
@@ -80,9 +74,8 @@ public sealed partial class TrayIconRenderer : IDisposable
 
     public void Dispose()
     {
-        _previousIcon?.Dispose();
-        if (_previousHandle != IntPtr.Zero)
-            DestroyIcon(_previousHandle);
-        _previousHandle = IntPtr.Zero;
+        if (_previousHandle != 0)
+            Native.DestroyIcon(_previousHandle);
+        _previousHandle = 0;
     }
 }

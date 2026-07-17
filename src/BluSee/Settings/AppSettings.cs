@@ -9,6 +9,7 @@ namespace BluSee.Settings;
 public sealed class AppSettings
 {
     private const int DefaultIntervalMinutes = 10;
+    private const int DefaultIconScalePercent = 100;
 
     private static string FilePath => Path.Combine(AppContext.BaseDirectory, "blusee.ini");
 
@@ -17,6 +18,15 @@ public sealed class AppSettings
 
     /// <summary>Clamped interval (1 minute .. 24 hours) used by the monitor. Not persisted.</summary>
     public TimeSpan PollInterval => TimeSpan.FromMinutes(Math.Clamp(PollIntervalMinutes, 1, 1440));
+
+    /// <summary>
+    /// Scale of the digits inside the tray icon, in percent. 100 fills the icon edge to edge;
+    /// e.g. 90 draws them 10% smaller (centered). The icon box itself is fixed by the system.
+    /// </summary>
+    public int IconScalePercent { get; set; } = DefaultIconScalePercent;
+
+    /// <summary>Clamped scale factor (0.30 .. 1.00) used by the renderer. Not persisted.</summary>
+    public float IconScale => Math.Clamp(IconScalePercent, 30, 100) / 100f;
 
     public static AppSettings Load()
     {
@@ -40,6 +50,9 @@ public sealed class AppSettings
                     if (key.Equals(nameof(PollIntervalMinutes), StringComparison.OrdinalIgnoreCase)
                         && int.TryParse(value, out var minutes))
                         settings.PollIntervalMinutes = minutes;
+                    else if (key.Equals(nameof(IconScalePercent), StringComparison.OrdinalIgnoreCase)
+                        && int.TryParse(value, out var scale))
+                        settings.IconScalePercent = scale;
                 }
 
                 return settings;
@@ -60,7 +73,10 @@ public sealed class AppSettings
         {
             File.WriteAllText(
                 FilePath,
-                $"# BluSee settings{Environment.NewLine}PollIntervalMinutes={PollIntervalMinutes}{Environment.NewLine}");
+                $"# BluSee settings{Environment.NewLine}"
+                + $"PollIntervalMinutes={PollIntervalMinutes}{Environment.NewLine}"
+                + $"# Tray digits size in percent (30..100); 100 fills the icon, 90 is 10% smaller.{Environment.NewLine}"
+                + $"IconScalePercent={IconScalePercent}{Environment.NewLine}");
         }
         catch
         {
