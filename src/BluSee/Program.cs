@@ -2,6 +2,7 @@
 using BluSee.Diagnostics;
 #endif
 using BluSee.Tray;
+using BluSee.Tray.Win32;
 
 namespace BluSee;
 
@@ -35,8 +36,13 @@ internal static class Program
 #endif
 
         // No await runs before this point, so we are still on the STA entry thread for the UI loop.
-        ApplicationConfiguration.Initialize();
-        Application.Run(new TrayAppContext());
+        using var app = new TrayApp();
+        while (Native.GetMessageW(out var msg, 0, 0, 0) > 0)
+        {
+            Native.TranslateMessage(in msg);
+            Native.DispatchMessageW(in msg);
+        }
+
         return 0;
     }
 }

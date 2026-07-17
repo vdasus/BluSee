@@ -1,16 +1,16 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace BluSee.Settings;
 
 /// <summary>
 /// Portable user settings stored as JSON next to the exe. Missing or invalid file falls back to
-/// defaults (and a default file is written so the knob is discoverable).
+/// defaults (and a default file is written so the knob is discoverable). Serialization is
+/// source-generated: reflection-based System.Text.Json is unavailable under NativeAOT.
 /// </summary>
 public sealed class AppSettings
 {
     private const int DefaultIntervalMinutes = 10;
-
-    private static readonly JsonSerializerOptions Json = new() { WriteIndented = true, PropertyNameCaseInsensitive = true };
 
     private static string FilePath => Path.Combine(AppContext.BaseDirectory, "blusee.settings.json");
 
@@ -27,7 +27,7 @@ public sealed class AppSettings
         {
             if (File.Exists(FilePath))
             {
-                var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), Json);
+                var loaded = JsonSerializer.Deserialize(File.ReadAllText(FilePath), AppSettingsJsonContext.Default.AppSettings);
                 if (loaded is not null)
                     return loaded;
             }
@@ -46,7 +46,7 @@ public sealed class AppSettings
     {
         try
         {
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, Json));
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, AppSettingsJsonContext.Default.AppSettings));
         }
         catch
         {
@@ -54,3 +54,7 @@ public sealed class AppSettings
         }
     }
 }
+
+[JsonSourceGenerationOptions(WriteIndented = true, PropertyNameCaseInsensitive = true)]
+[JsonSerializable(typeof(AppSettings))]
+internal sealed partial class AppSettingsJsonContext : JsonSerializerContext;
