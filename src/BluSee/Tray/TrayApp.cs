@@ -51,8 +51,10 @@ public sealed class TrayApp : IDisposable
             new PnpBatteryProvider(),
             new BleGattProvider(),
         ];
-        _monitor = new BatteryMonitor(providers, _settings.PollInterval);
+        _monitor = new BatteryMonitor(providers, _settings.PollInterval, DeviceCache.Load());
         _monitor.Updated += _ => _window.Post(MessageWindow.DevicesUpdatedMessage);
+        // Show last run's readings immediately (marked disconnected); the first poll replaces them.
+        Apply(_monitor.Current);
         _monitor.Start();
     }
 

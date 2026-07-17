@@ -6,8 +6,10 @@ namespace BluSee.Monitoring;
 /// Polls all battery providers on an interval and merges their results into one device list.
 /// Battery level on wireless devices changes slowly, so the default interval is minutes, not seconds
 /// (frequent polling drains the device itself). Raises <see cref="Updated"/> after every refresh.
+/// With a <see cref="DeviceCache"/>, devices missing from a poll (asleep) are re-emitted with their
+/// last persisted reading, and <see cref="Current"/> starts pre-seeded from the previous run.
 /// </summary>
-public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, TimeSpan interval)
+public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, TimeSpan interval, DeviceCache? cache = null)
 {
     private readonly CancellationTokenSource _cts = new();
     private PeriodicTimer? _timer;
@@ -20,7 +22,7 @@ public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, Ti
     }
 
     /// <summary>Latest merged snapshot. Replaced on every refresh.</summary>
-    public IReadOnlyList<DeviceBattery> Current { get; private set; } = [];
+    public IReadOnlyList<DeviceBattery> Current { get; private set; } = cache?.Devices ?? [];
 
     /// <summary>Raised after each refresh (on a background thread — marshal before touching UI).</summary>
     public event Action<IReadOnlyList<DeviceBattery>>? Updated;
@@ -72,10 +74,22 @@ public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, Ti
             }
         }
 
-        // Dedup by display name, preferring a real battery value over n/a.
+        if (cache is not null)
+        {
+            cache.Update(merged);
+
+            // Re-emit remembered devices this poll did not see (asleep or provider hiccup).
+            var seen = merged.Select(d => d.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var cached in cache.Devices)
+                if (!seen.Contains(cached.Id))
+                    merged.Add(cached);
+        }
+
+        // Dedup by display name, preferring a real battery value over n/a, and a live reading over
+        // a cached (disconnected) one.
         Current = merged
             .GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.OrderByDescending(d => d.HasBattery).First())
+            .Select(g => g.OrderByDescending(d => d.HasBattery).ThenByDescending(d => d.IsConnected).First())
             .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
