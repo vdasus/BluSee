@@ -74,7 +74,7 @@ public sealed class BleGattProvider : IBatteryProvider
                 if (read.Status != GattCommunicationStatus.Success)
                     continue;
 
-                var reader = DataReader.FromBuffer(read.Value);
+                using var reader = DataReader.FromBuffer(read.Value);
                 if (reader.UnconsumedBufferLength < 1)
                     continue;
 
