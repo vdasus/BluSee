@@ -14,8 +14,11 @@ public sealed class TrayIconRenderer : IDisposable
 {
     private nint _previousHandle;
 
-    /// <summary>Renders the percent into a small icon. The handle stays valid until the next call.</summary>
-    public nint Render(int? percent, bool lightTheme)
+    /// <summary>
+    /// Renders the percent into a small icon. <paramref name="scale"/> (0..1] shrinks the digits
+    /// within the fixed icon box, centered. The handle stays valid until the next call.
+    /// </summary>
+    public nint Render(int? percent, bool lightTheme, float scale = 1f)
     {
         var dimension = Math.Max(16, Native.GetSystemMetrics(Native.SM_CXSMICON));
 
@@ -24,7 +27,7 @@ public sealed class TrayIconRenderer : IDisposable
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.Clear(Color.Transparent);
-            Draw(g, dimension, percent, lightTheme);
+            Draw(g, dimension, percent, lightTheme, scale);
         }
 
         var handle = bitmap.GetHicon();
@@ -34,7 +37,7 @@ public sealed class TrayIconRenderer : IDisposable
         return handle;
     }
 
-    private static void Draw(Graphics g, int dimension, int? percent, bool lightTheme)
+    private static void Draw(Graphics g, int dimension, int? percent, bool lightTheme, float userScale)
     {
         var text = percent is null ? "?" : percent.Value >= 100 ? "F" : percent.Value.ToString();
         var color = percent switch
@@ -56,7 +59,7 @@ public sealed class TrayIconRenderer : IDisposable
         if (bounds.Width <= 0f || bounds.Height <= 0f)
             return;
 
-        var target = dimension - 1f;
+        var target = (dimension - 1f) * userScale;
         var scale = Math.Min(target / bounds.Width, target / bounds.Height);
         using var transform = new Matrix();
         transform.Translate(

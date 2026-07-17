@@ -43,7 +43,7 @@ public sealed class TrayApp : IDisposable
         _window.TaskbarCreated += () => _tray!.Readd();
 
         _tray = new TrayIcon(_window.Handle);
-        _tray.Update(_renderer.Render(null, ThemeReader.IsLightTheme()), "BluSee");
+        _tray.Update(_renderer.Render(null, ThemeReader.IsLightTheme(), _settings.IconScale), "BluSee");
 
         IReadOnlyList<IBatteryProvider> providers =
         [
@@ -62,7 +62,7 @@ public sealed class TrayApp : IDisposable
     {
         var lowest = BatteryMonitor.LowestPercent(devices);
         var tip = Truncate(lowest is null ? "BluSee — no battery data" : $"BluSee — lowest {lowest}%");
-        _tray.Update(_renderer.Render(lowest, ThemeReader.IsLightTheme()), tip);
+        _tray.Update(_renderer.Render(lowest, ThemeReader.IsLightTheme(), _settings.IconScale), tip);
         NotifyLowBattery(devices);
     }
 
