@@ -46,6 +46,8 @@ public sealed class TrayAppContext : ApplicationContext
         _menu.Items.Add(_autostartItem);
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add(new ToolStripMenuItem("Exit", null, OnExit));
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add(new ToolStripMenuItem($"BluSee v{AppVersion}") { Enabled = false });
         _menu.Opening += (_, _) => ThemeMenu.Apply(_menu, ThemeReader.IsLightTheme());
         UpdateDeviceItems([]);
 
@@ -178,4 +180,7 @@ public sealed class TrayAppContext : ApplicationContext
     }
 
     private static string Truncate(string text) => text.Length <= 63 ? text : text[..63];
+
+    /// <summary>Three-part app version (from AssemblyVersion), shown at the bottom of the menu.</summary>
+    private static string AppVersion => typeof(TrayAppContext).Assembly.GetName().Version?.ToString(3) ?? "?";
 }
