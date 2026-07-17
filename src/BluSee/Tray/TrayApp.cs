@@ -73,9 +73,18 @@ public sealed class TrayApp : IDisposable
         Apply(_monitor.Current);
     }
 
+    private bool _menuVisible;
+
     private void ShowMenu()
     {
+        // TrackPopupMenuEx runs a modal loop that keeps dispatching our messages, so another tray
+        // click would re-enter here and stack a second menu on top of the first.
+        if (_menuVisible)
+            return;
+        _menuVisible = true;
+
         var menu = Native.CreatePopupMenu();
+        var intervals = nint.Zero;
         try
         {
             var devices = _monitor.Current;
@@ -92,14 +101,17 @@ public sealed class TrayApp : IDisposable
             Native.AppendMenuW(menu, Native.MF_SEPARATOR, 0, null);
             Native.AppendMenuW(menu, Native.MF_STRING, CmdRefresh, "Refresh");
 
-            var intervals = Native.CreatePopupMenu();
+            intervals = Native.CreatePopupMenu();
             foreach (var minutes in IntervalChoices)
             {
                 var check = minutes == _settings.PollIntervalMinutes ? Native.MF_CHECKED : 0;
                 Native.AppendMenuW(intervals, Native.MF_STRING | check, CmdIntervalBase + (uint)minutes, $"{minutes} min");
             }
 
-            Native.AppendMenuW(menu, Native.MF_POPUP, (nuint)intervals, "Poll interval");
+            // On success the parent menu owns the submenu (DestroyMenu(menu) frees it recursively);
+            // on failure we must free it ourselves in the finally below.
+            if (Native.AppendMenuW(menu, Native.MF_POPUP, (nuint)intervals, "Poll interval"))
+                intervals = 0;
 
             var autostartCheck = _autostart.IsEnabled() ? Native.MF_CHECKED : 0;
             Native.AppendMenuW(menu, Native.MF_STRING | autostartCheck, CmdAutostart, "Start with Windows");
@@ -122,7 +134,10 @@ public sealed class TrayApp : IDisposable
         }
         finally
         {
-            Native.DestroyMenu(menu); // destroys the interval submenu with it
+            if (intervals != 0)
+                Native.DestroyMenu(intervals);
+            Native.DestroyMenu(menu); // destroys the attached interval submenu with it
+            _menuVisible = false;
         }
     }
 
