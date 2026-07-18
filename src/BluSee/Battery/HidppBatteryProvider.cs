@@ -33,6 +33,11 @@ public sealed class HidppBatteryProvider : IBatteryProvider
     private readonly Dictionary<string, Dictionary<(byte DeviceIndex, ushort Feature), byte>> _featureIndices =
         new(StringComparer.OrdinalIgnoreCase);
 
+    // Receiver list, re-enumerated only on the periodic full scan or after an open failure —
+    // receivers change on USB replug, not between polls, and each WinRT enumeration allocates COM
+    // wrappers whose native side lingers until a gen2 GC (slow RSS creep on an idle heap).
+    private IReadOnlyList<HidppReceiverGroup>? _groups;
+
     public string Name => "Logitech HID++";
 
     public async Task<IReadOnlyList<DeviceBattery>> GetDevicesAsync(CancellationToken ct)
@@ -40,9 +45,13 @@ public sealed class HidppBatteryProvider : IBatteryProvider
         var fresh = new Dictionary<string, DeviceBattery>(StringComparer.OrdinalIgnoreCase);
         _pollCount++;
 
-        var groups = await HidppTransport.FindReceiverGroupsAsync(ct);
-        DebugLog.Write("hidpp", $"{groups.Count} receiver group(s) found");
-        foreach (var group in groups)
+        if (_groups is null || _pollCount % FullScanEvery == 1)
+        {
+            _groups = await HidppTransport.FindReceiverGroupsAsync(ct);
+            DebugLog.Write("hidpp", $"{_groups.Count} receiver group(s) found");
+        }
+
+        foreach (var group in _groups)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -50,8 +59,10 @@ public sealed class HidppBatteryProvider : IBatteryProvider
             if (transport is null || transport.VendorId != LogitechVendorId)
             {
                 DebugLog.Write("hidpp", transport is null
-                    ? $"receiver '{group.Key}': could not open"
+                    ? $"receiver '{group.Key}': could not open (re-enumerating next poll)"
                     : $"receiver '{group.Key}': skipped, vendor 0x{transport.VendorId:X4} is not Logitech");
+                if (transport is null)
+                    _groups = null; // stale path (unplugged receiver) — re-enumerate next poll
                 continue;
             }
 

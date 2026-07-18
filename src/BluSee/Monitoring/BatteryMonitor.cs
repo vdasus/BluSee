@@ -75,6 +75,14 @@ public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, Ti
         {
             _refreshGate.Release();
         }
+
+        // Each poll churns WinRT COM wrappers (device enumeration, GATT) whose native side is only
+        // released by finalizers; with a near-idle heap gen2 may not run for hours, so the process
+        // slowly grows. A compacting collect+finalize here costs well under a millisecond at this
+        // heap size and keeps the footprint flat between polls.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
     }
 
     private async Task RefreshCoreAsync(string trigger, CancellationToken ct)

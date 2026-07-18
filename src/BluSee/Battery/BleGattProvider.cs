@@ -15,14 +15,28 @@ public sealed class BleGattProvider : IBatteryProvider
 {
     private static readonly TimeSpan PerDeviceTimeout = TimeSpan.FromSeconds(5);
 
+    // When no paired BLE devices exist, re-enumerating every poll only churns WinRT COM wrappers
+    // (native memory until a gen2 GC). Recheck every Nth poll — pairing a new device is rare.
+    private const int RecheckEvery = 6;
+    private int _pollCount;
+    private bool _anyPaired = true; // assume yes until the first enumeration says otherwise
+
     public string Name => "BLE GATT";
 
     public async Task<IReadOnlyList<DeviceBattery>> GetDevicesAsync(CancellationToken ct)
     {
         var result = new List<DeviceBattery>();
 
+        _pollCount++;
+        if (!_anyPaired && _pollCount % RecheckEvery != 1)
+        {
+            DebugLog.Write("ble", "skipped (no paired BLE devices; periodic recheck pending)");
+            return result;
+        }
+
         var selector = BluetoothLEDevice.GetDeviceSelectorFromPairingState(true);
         var paired = await DeviceInformation.FindAllAsync(selector).AsTask(ct);
+        _anyPaired = paired.Count > 0;
         DebugLog.Write("ble", $"{paired.Count} paired BLE device(s)");
         foreach (var info in paired)
         {
