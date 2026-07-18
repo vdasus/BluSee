@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using BluSee.Logging;
 using Microsoft.Win32.SafeHandles;
 using Windows.Devices.Enumeration;
 using Windows.Devices.HumanInterfaceDevice;
@@ -23,6 +24,11 @@ public sealed class HidppTransport : IAsyncDisposable
     public const byte ShortReportId = 0x10;
     public const byte LongReportId = 0x11;
 
+    // The receiver sometimes holds an output write for tens of seconds (observed 3..61 s in debug
+    // logs, apparently while it retries reaching a sleeping device). Cap it: a request whose write
+    // cannot complete quickly is treated as unanswered instead of stalling the whole poll.
+    private static readonly TimeSpan WriteTimeout = TimeSpan.FromSeconds(3);
+
     private sealed record Endpoint(SafeFileHandle Handle, FileStream Stream, int InLength, int OutLength, ushort Usage);
 
     private readonly List<Endpoint> _endpoints;
@@ -43,6 +49,13 @@ public sealed class HidppTransport : IAsyncDisposable
 
     public ushort VendorId { get; }
     public ushort ProductId { get; }
+
+    /// <summary>True when the last request's frame write timed out (receiver did not accept it).</summary>
+    public bool LastWriteTimedOut { get; private set; }
+
+    /// <summary>Requests in a row whose write timed out; resets on any accepted write. Lets the
+    /// client stop probing a receiver whose RF buffer is clogged (e.g. retrying a sleeping device).</summary>
+    public int ConsecutiveWriteTimeouts { get; private set; }
 
     /// <summary>Enumerate Logitech HID++ vendor collections and group them per receiver.</summary>
     public static async Task<IReadOnlyList<HidppReceiverGroup>> FindReceiverGroupsAsync(CancellationToken ct)
@@ -128,9 +141,29 @@ public sealed class HidppTransport : IAsyncDisposable
         try
         {
             // Drop stale/unsolicited reports queued before this request.
-            while (_incoming.Reader.TryRead(out _)) { }
+            var dropped = 0;
+            while (_incoming.Reader.TryRead(out _))
+                dropped++;
+            if (dropped > 0 && DebugLog.Enabled)
+                DebugLog.Write("hidpp", $"dropped {dropped} stale report(s) before send");
 
-            await WriteFrameAsync(frame, ct);
+            try
+            {
+                await WriteFrameAsync(frame, ct);
+                LastWriteTimedOut = false;
+                ConsecutiveWriteTimeouts = 0;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                LastWriteTimedOut = true;
+                ConsecutiveWriteTimeouts++;
+                if (DebugLog.Enabled)
+                    DebugLog.Write("hidpp", $"TX write timeout ({WriteTimeout.TotalSeconds:0} s, {ConsecutiveWriteTimeouts} in a row) for {DebugLog.Hex(frame)}");
+                return null; // receiver refused to take the frame in time — treat as no reply
+            }
+
+            if (DebugLog.Enabled)
+                DebugLog.Write("hidpp", $"TX {DebugLog.Hex(frame)}");
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(timeout);
@@ -138,11 +171,22 @@ public sealed class HidppTransport : IAsyncDisposable
             {
                 while (await _incoming.Reader.WaitToReadAsync(cts.Token))
                     while (_incoming.Reader.TryRead(out var reply))
+                    {
                         if (match(reply))
+                        {
+                            if (DebugLog.Enabled)
+                                DebugLog.Write("hidpp", $"RX {DebugLog.Hex(reply)}");
                             return reply;
+                        }
+
+                        if (DebugLog.Enabled)
+                            DebugLog.Write("hidpp", $"RX (unmatched) {DebugLog.Hex(reply)}");
+                    }
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
+                if (DebugLog.Enabled)
+                    DebugLog.Write("hidpp", $"RX timeout ({timeout.TotalMilliseconds:0} ms) for TX {DebugLog.Hex(frame)}");
                 return null; // timed out waiting for a matching reply
             }
 
@@ -162,8 +206,14 @@ public sealed class HidppTransport : IAsyncDisposable
 
         var buffer = new byte[ep.OutLength];
         Array.Copy(frame, buffer, Math.Min(frame.Length, ep.OutLength));
-        await ep.Stream.WriteAsync(buffer, ct);
-        await ep.Stream.FlushAsync(ct);
+
+        using var writeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        writeCts.CancelAfter(WriteTimeout);
+        var sw = DebugLog.Enabled ? System.Diagnostics.Stopwatch.StartNew() : null;
+        await ep.Stream.WriteAsync(buffer, writeCts.Token);
+        await ep.Stream.FlushAsync(writeCts.Token);
+        if (sw is not null && sw.ElapsedMilliseconds > 100)
+            DebugLog.Write("hidpp", $"slow TX write: {sw.ElapsedMilliseconds} ms for {DebugLog.Hex(frame)}");
     }
 
     private async Task ReadLoopAsync(Endpoint ep, CancellationToken ct)

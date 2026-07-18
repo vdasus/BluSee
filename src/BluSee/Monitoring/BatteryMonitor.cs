@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using BluSee.Battery;
+using BluSee.Logging;
 
 namespace BluSee.Monitoring;
 
@@ -12,6 +14,7 @@ namespace BluSee.Monitoring;
 public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, TimeSpan interval, DeviceCache? cache = null)
 {
     private readonly CancellationTokenSource _cts = new();
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private PeriodicTimer? _timer;
 
     /// <summary>Change the poll cadence on the fly (applies to the running timer).</summary>
@@ -33,16 +36,16 @@ public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, Ti
     public void Stop() => _cts.Cancel();
 
     /// <summary>Force an immediate refresh outside the timer (e.g. menu "Refresh").</summary>
-    public Task RefreshNowAsync() => RefreshAsync(_cts.Token);
+    public Task RefreshNowAsync() => RefreshAsync("manual", _cts.Token);
 
     private async Task RunAsync(CancellationToken ct)
     {
         _timer = new PeriodicTimer(interval);
         try
         {
-            await RefreshAsync(ct); // first reading right away
+            await RefreshAsync("startup", ct); // first reading right away
             while (await _timer.WaitForNextTickAsync(ct))
-                await RefreshAsync(ct);
+                await RefreshAsync("timer", ct);
         }
         catch (OperationCanceledException)
         {
@@ -54,28 +57,65 @@ public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, Ti
         }
     }
 
-    private async Task RefreshAsync(CancellationToken ct)
+    private async Task RefreshAsync(string trigger, CancellationToken ct)
     {
+        // Coalesce overlapping refreshes (timer tick + menu Refresh): two concurrent polls open
+        // two HID++ transports to the same receiver and cross-slow each other into minutes.
+        if (!await _refreshGate.WaitAsync(0, ct))
+        {
+            DebugLog.Write("poll", $"refresh ({trigger}) skipped: another refresh is already running");
+            return;
+        }
+
+        try
+        {
+            await RefreshCoreAsync(trigger, ct);
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
+    }
+
+    private async Task RefreshCoreAsync(string trigger, CancellationToken ct)
+    {
+        DebugLog.Write("poll", $"refresh started ({trigger})");
+        var total = Stopwatch.StartNew();
         var merged = new List<DeviceBattery>();
         foreach (var provider in providers)
         {
             ct.ThrowIfCancellationRequested();
+            var sw = Stopwatch.StartNew();
             try
             {
-                merged.AddRange(await provider.GetDevicesAsync(ct));
+                var devices = await provider.GetDevicesAsync(ct);
+                if (DebugLog.Enabled)
+                {
+                    DebugLog.Write("poll", $"{provider.Name}: {devices.Count} device(s) in {sw.ElapsedMilliseconds} ms");
+                    foreach (var d in devices)
+                        DebugLog.Write("poll", $"  {d.Name}: {(d.HasBattery ? $"{d.BatteryPercent}%" : "n/a")}, connected={d.IsConnected}, source={d.Source}, id={d.Id}");
+                }
+
+                merged.AddRange(devices);
             }
             catch (OperationCanceledException)
             {
                 throw;
             }
-            catch
+            catch (Exception ex)
             {
                 // a failing provider must not break the others
+                DebugLog.Write("poll", $"{provider.Name} FAILED after {sw.ElapsedMilliseconds} ms: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
         if (cache is not null)
         {
+            // A sleeping device may answer battery but not its name: reuse the persisted name
+            // instead of showing (and re-persisting) the provider's synthetic fallback.
+            for (var i = 0; i < merged.Count; i++)
+                merged[i] = cache.ResolveName(merged[i]);
+
             cache.Update(merged);
 
             // Re-emit remembered devices this poll did not see (asleep or provider hiccup).
@@ -92,6 +132,9 @@ public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, Ti
             .Select(g => g.OrderByDescending(d => d.HasBattery).ThenByDescending(d => d.IsConnected).First())
             .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        if (DebugLog.Enabled)
+            DebugLog.Write("poll", $"refresh done ({trigger}) in {total.ElapsedMilliseconds} ms: {string.Join("; ", Current.Select(d => $"{d.Name}={(d.HasBattery ? $"{d.BatteryPercent}%" : "n/a")}{(d.IsConnected ? "" : " (cached)")}"))}");
 
         Updated?.Invoke(Current);
     }

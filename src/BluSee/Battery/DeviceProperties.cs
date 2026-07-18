@@ -5,7 +5,7 @@ namespace BluSee.Battery;
 /// WinRT does not return "all" properties — they must be requested by name in additionalProperties.
 /// In Stage 1 we request both battery-key candidates: the real one depends on driver/device.
 /// </summary>
-public static class DeviceProperties
+public static partial class DeviceProperties
 {
     // Battery-level key candidates (DEVPKEY battery). Verify both on hardware (see claudeplan.md).
     public const string BatteryLevel2 = "{104EA319-6EE2-4701-BD47-8D0F1493C853} 2";
@@ -18,8 +18,16 @@ public static class DeviceProperties
     public const string ContainerId = "System.Devices.ContainerId";
     public const string ItemNameDisplay = "System.ItemNameDisplay";
 
+    /// <summary>
+    /// Assembly-local list type for property keys passed to WinRT APIs. Under NativeAOT, CsWinRT's
+    /// source generator emits marshalling vtables only for partial types defined in this assembly;
+    /// both string[] and a plain List&lt;string&gt; fail at runtime with InvalidCastException
+    /// ("Failed to create a CCW ... for IIterable&lt;String&gt;"). Must stay partial.
+    /// </summary>
+    public sealed partial class RequestedPropertyList : List<string>;
+
     /// <summary>Property bag requested for every device in Stage 1.</summary>
-    public static readonly string[] Requested =
+    public static readonly RequestedPropertyList Requested =
     [
         BatteryLevel2,
         BatteryLevel9,

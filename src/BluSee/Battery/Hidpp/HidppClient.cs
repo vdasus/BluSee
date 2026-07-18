@@ -1,4 +1,5 @@
 using System.Text;
+using BluSee.Logging;
 
 namespace BluSee.Battery.Hidpp;
 
@@ -8,8 +9,11 @@ public sealed record HidppBatteryReading(byte DeviceIndex, int Percent, ushort F
 /// <summary>
 /// Minimal HID++ 2.0 client: resolves features through the root feature (0x0000) and reads battery
 /// via UnifiedBattery (0x1004) or the legacy BatteryStatus (0x1000). Speaks short reports (0x10).
+/// The optional <paramref name="featureIndexCache"/> (owned by the provider, survives across polls)
+/// skips the root.getFeature round-trip for already-resolved features — a Bolt receiver has one
+/// outgoing RF queue and every saved frame is seconds saved when a dozing device clogs it.
 /// </summary>
-public sealed class HidppClient(HidppTransport transport)
+public sealed class HidppClient(HidppTransport transport, Dictionary<(byte DeviceIndex, ushort Feature), byte>? featureIndexCache = null)
 {
     private const byte RootFeatureIndex = 0x00;
     private const ushort FeatureDeviceName = 0x0005;
@@ -17,7 +21,16 @@ public sealed class HidppClient(HidppTransport transport)
     private const ushort FeatureBatteryStatus = 0x1000;
     private const byte ErrorIndex = 0xFF;
 
-    private static readonly TimeSpan Timeout = TimeSpan.FromMilliseconds(500);
+    // HID++ 1.0 error marker (sub-id 0x8F). The receiver answers a request to an empty device slot
+    // with this instantly (e.g. err 0x09 unknown device); treating it as a reply saves a full
+    // 500 ms timeout per request — with 6 slots and 2 battery features that is seconds per poll.
+    private const byte LegacyErrorSubId = 0x8F;
+
+    // Reply window. Empty receiver slots answer instantly (HID++ 1.0 error, matched), so a longer
+    // window costs nothing there — but a drowsy device that just woke answers in ~0.5-1.5 s, and
+    // a 500 ms window dropped those replies as "unmatched" right after the timeout (seen in v0.3.3
+    // debug logs), wasting a poll the device was actually reachable in.
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
 
     // Rotating software id (1..15) tags each request so a reply can be correlated to it. A constant
     // id let a late reply from one request (e.g. DeviceName getCount) satisfy a different request
@@ -26,26 +39,46 @@ public sealed class HidppClient(HidppTransport transport)
 
     private byte NextSwId() => _swId = (byte)(_swId % 15 + 1);
 
+    // After this many requests in a row that the receiver refused to accept (write timeouts), its
+    // RF buffer is clogged — further probing this poll only adds 3 s stalls per request.
+    private const int MaxConsecutiveWriteTimeouts = 3;
+
     /// <summary>Probe device indices 1..6 on the receiver and return any with a battery reading.</summary>
     public async Task<IReadOnlyList<HidppBatteryReading>> ReadAllAsync(CancellationToken ct)
+        => await ReadSlotsAsync([1, 2, 3, 4, 5, 6], allowDirectFallback: true, needName: null, ct);
+
+    /// <summary>
+    /// Probe the given receiver slots. 1..6 = devices paired to a receiver; battery is probed
+    /// directly with retries (a paired device may be asleep and miss the first request, so a
+    /// one-shot connectivity gate would drop it). <paramref name="needName"/> lets the caller skip
+    /// the multi-frame name read for slots whose name it already knows (null = always read) —
+    /// fewer frames means fewer chances to clog the receiver's RF queue.
+    /// </summary>
+    public async Task<IReadOnlyList<HidppBatteryReading>> ReadSlotsAsync(
+        IReadOnlyList<byte> slots, bool allowDirectFallback, Func<byte, bool>? needName, CancellationToken ct)
     {
         var result = new List<HidppBatteryReading>();
 
-        // 1..6 = devices paired to a receiver. Probe battery directly with retries: a paired device
-        // may be asleep and miss the first request, so a one-shot connectivity gate would drop it.
-        for (byte index = 1; index <= 6; index++)
+        foreach (var index in slots)
         {
             ct.ThrowIfCancellationRequested();
-            var reading = await ReadDeviceAsync(index, ct);
+            if (transport.ConsecutiveWriteTimeouts >= MaxConsecutiveWriteTimeouts)
+            {
+                DebugLog.Write("hidpp", $"scan aborted before dev {index}: receiver not accepting writes");
+                return result;
+            }
+
+            var reading = await ReadDeviceAsync(index, needName?.Invoke(index) ?? true, ct);
             if (reading is not null)
                 result.Add(reading);
         }
 
         // 0xFF = a device connected directly (e.g. Bluetooth) with no receiver. Probe it only as a
         // fallback — on a real receiver it would alias an already-listed slot and create duplicates.
-        if (result.Count == 0)
+        if (result.Count == 0 && allowDirectFallback
+            && transport.ConsecutiveWriteTimeouts < MaxConsecutiveWriteTimeouts)
         {
-            var direct = await ReadDeviceAsync(0xFF, ct);
+            var direct = await ReadDeviceAsync(0xFF, needName?.Invoke(0xFF) ?? true, ct);
             if (direct is not null)
                 result.Add(direct);
         }
@@ -54,24 +87,54 @@ public sealed class HidppClient(HidppTransport transport)
     }
 
     public async Task<HidppBatteryReading?> ReadDeviceAsync(byte deviceIndex, CancellationToken ct)
+        => await ReadDeviceAsync(deviceIndex, readName: true, ct);
+
+    private async Task<HidppBatteryReading?> ReadDeviceAsync(byte deviceIndex, bool readName, CancellationToken ct)
     {
         // Prefer UnifiedBattery (newer), fall back to legacy BatteryStatus.
         foreach (var feature in (ushort[])[FeatureUnifiedBattery, FeatureBatteryStatus])
         {
             var featureIndex = await GetFeatureIndexAsync(deviceIndex, feature, ct);
-            if (featureIndex is null or 0)
+            if (featureIndex is null)
+            {
+                // Only meaningful when a frame was actually sent (a cache hit returns non-null
+                // without touching the transport, leaving a stale flag from the previous device).
+                if (transport.LastWriteTimedOut)
+                {
+                    DebugLog.Write("hidpp", $"dev {deviceIndex}: unreachable (write timeout), giving up this poll");
+                    return null; // the receiver is not even taking frames for it — retries only stall
+                }
+
+                continue;
+            }
+
+            if (featureIndex == 0)
                 continue;
 
+            if (DebugLog.Enabled)
+                DebugLog.Write("hidpp", $"dev {deviceIndex}: feature 0x{feature:X4} at index 0x{featureIndex:X2}");
+
             // A sleeping device may not answer the first status request; retry a couple of times.
-            for (var attempt = 0; attempt < 3; attempt++)
+            for (var attempt = 1; attempt <= 3; attempt++)
             {
                 var percent = await ReadPercentAsync(deviceIndex, featureIndex.Value, feature, ct);
                 if (percent is not null)
                 {
-                    var name = await ReadDeviceNameAsync(deviceIndex, ct);
+                    var name = readName ? await ReadDeviceNameAsync(deviceIndex, ct) : null;
+                    if (DebugLog.Enabled)
+                        DebugLog.Write("hidpp", $"dev {deviceIndex}: {percent}% (attempt {attempt}), name {(readName ? name is null ? "unresolved" : $"'{name}'" : "already known, skipped")}");
                     return new HidppBatteryReading(deviceIndex, percent.Value, feature, name);
                 }
+
+                if (transport.LastWriteTimedOut)
+                {
+                    DebugLog.Write("hidpp", $"dev {deviceIndex}: unreachable (write timeout), giving up this poll");
+                    return null;
+                }
             }
+
+            if (DebugLog.Enabled)
+                DebugLog.Write("hidpp", $"dev {deviceIndex}: feature 0x{feature:X4} gave no percent after 3 attempts");
         }
 
         return null;
@@ -93,6 +156,8 @@ public sealed class HidppClient(HidppTransport transport)
             var name = await TryReadNameAsync(deviceIndex, featureIndex.Value, ct);
             if (name is not null)
                 return name;
+            if (transport.LastWriteTimedOut)
+                break; // link is down — the fallback name and DeviceCache cover us
         }
 
         return null;
@@ -109,7 +174,7 @@ public sealed class HidppClient(HidppTransport transport)
             return null;
 
         var name = new StringBuilder(count);
-        for (byte charIndex = 0; name.Length < count; charIndex += 15)
+        for (byte charIndex = 0; name.Length < count;)
         {
             var chunk = await CallAsync(deviceIndex, featureIndex, funcId: 0x01, charIndex, p1: 0, ct);
             if (chunk is null || IsError(chunk, deviceIndex))
@@ -127,6 +192,10 @@ public sealed class HidppClient(HidppTransport transport)
 
             if (added == 0)
                 break; // no progress — avoid an infinite loop
+
+            // Advance by what the reply actually carried: a long report holds up to 16 chars, so a
+            // fixed +15 step re-reads the seam char ("MX Anywhere 3S ffor Busines") and truncates.
+            charIndex += (byte)added;
         }
 
         var text = name.ToString().Trim();
@@ -149,12 +218,18 @@ public sealed class HidppClient(HidppTransport transport)
     /// <summary>Root.getFeature: map a feature id to its per-device feature index (0 = unsupported).</summary>
     private async Task<byte?> GetFeatureIndexAsync(byte deviceIndex, ushort featureId, CancellationToken ct)
     {
+        if (featureIndexCache?.TryGetValue((deviceIndex, featureId), out var known) is true)
+            return known;
+
         var reply = await CallAsync(deviceIndex, RootFeatureIndex, funcId: 0x00,
             (byte)(featureId >> 8), (byte)(featureId & 0xFF), ct);
         if (reply is null || IsError(reply, deviceIndex))
             return null;
 
-        return reply[4]; // featureIndex
+        var index = reply[4]; // featureIndex
+        if (index != 0)
+            featureIndexCache?[(deviceIndex, featureId)] = index;
+        return index;
     }
 
     private async Task<int?> ReadPercentAsync(byte deviceIndex, byte featureIndex, ushort feature, CancellationToken ct)
@@ -203,8 +278,11 @@ public sealed class HidppClient(HidppTransport transport)
             return true;
 
         // HID++ 2.0 error: [.. , 0xFF, failedFeatureIndex, (funcId<<4)|swId, errorCode]
-        return r[2] == ErrorIndex && r[3] == featureIndex && r.Length >= 6 && (r[4] & 0x0F) == swId;
+        // HID++ 1.0 error: [.. , 0x8F, failedFeatureIndex, (funcId<<4)|swId, errorCode]
+        return r[2] is ErrorIndex or LegacyErrorSubId
+            && r[3] == featureIndex && r.Length >= 6 && (r[4] & 0x0F) == swId;
     }
 
-    private static bool IsError(byte[] r, byte deviceIndex) => r.Length >= 3 && r[1] == deviceIndex && r[2] == ErrorIndex;
+    private static bool IsError(byte[] r, byte deviceIndex)
+        => r.Length >= 3 && r[1] == deviceIndex && r[2] is ErrorIndex or LegacyErrorSubId;
 }

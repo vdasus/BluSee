@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Windowless tray app on raw Win32 (no WinForms). Diagnostic mode still writes
-         blusee-diag.log next to the exe. -->
+    <!-- Windowless tray app on raw Win32 (no WinForms). Diagnostic mode (Debug builds) writes
+         blusee-diag.log next to the exe; Debug=on in blusee.ini writes blusee.log (all builds). -->
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -12,9 +12,9 @@
     <!-- Per-monitor DPI awareness moved to app.manifest (was WinForms ApplicationHighDpiMode). -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>blusee</AssemblyName>
-    <Version>0.2.6</Version>
-    <AssemblyVersion>0.2.6.0</AssemblyVersion>
-    <FileVersion>0.2.6.0</FileVersion>
+    <Version>0.3.6</Version>
+    <AssemblyVersion>0.3.6.0</AssemblyVersion>
+    <FileVersion>0.3.6.0</FileVersion>
     <!-- Win32 icon resource embedded in the exe (shown in File Explorer). -->
     <ApplicationIcon>app.ico</ApplicationIcon>
 

@@ -10,7 +10,7 @@ namespace BluSee.Tray;
 /// process leaks GDI handles over its lifetime. The shell copies the icon on Shell_NotifyIcon, so
 /// the previous handle is freed on the next render.
 /// </summary>
-public sealed class TrayIconRenderer : IDisposable
+public sealed partial class TrayIconRenderer : IDisposable
 {
     private nint _previousHandle;
 

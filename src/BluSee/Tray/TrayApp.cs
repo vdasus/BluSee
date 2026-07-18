@@ -1,4 +1,5 @@
 using BluSee.Battery;
+using BluSee.Logging;
 using BluSee.Monitoring;
 using BluSee.Settings;
 using BluSee.Startup;
@@ -11,7 +12,7 @@ namespace BluSee.Tray;
 /// popup menu (dark-mode aware via <see cref="DarkMode"/>). Monitor updates arrive on a background
 /// thread and are marshalled to the UI thread by posting a window message.
 /// </summary>
-public sealed class TrayApp : IDisposable
+public sealed partial class TrayApp : IDisposable
 {
     private const int LowBatteryThreshold = 15;
 
@@ -34,6 +35,12 @@ public sealed class TrayApp : IDisposable
 
     public TrayApp()
     {
+        if (_settings.Debug)
+        {
+            DebugLog.Enable();
+            DebugLog.Write("app", $"BluSee v{AppVersion} started, poll interval {_settings.PollIntervalMinutes} min");
+        }
+
         DarkMode.EnableForProcess();
 
         _window = new MessageWindow();
@@ -163,6 +170,7 @@ public sealed class TrayApp : IDisposable
                 _settings.PollIntervalMinutes = (int)minutes;
                 _settings.TrySave();
                 _monitor.SetInterval(_settings.PollInterval);
+                DebugLog.Write("app", $"poll interval changed to {minutes} min");
                 break;
         }
     }

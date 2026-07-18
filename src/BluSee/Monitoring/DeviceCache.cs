@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using BluSee.Battery;
+using BluSee.Logging;
 
 namespace BluSee.Monitoring;
 
@@ -13,6 +14,11 @@ public sealed record PersistedDevice(DeviceBattery Device, DateTime SavedAtUtc);
 /// read (same idea as Logi Options+). Provider caches die with the process; this is the
 /// cross-restart complement. All failures are swallowed — the cache is an enhancement, never a
 /// blocker. Serialization is source-generated to stay NativeAOT-compatible.
+/// Stored as plain text deliberately: the file holds device instance ids (which embed Bluetooth
+/// MAC addresses), names and battery values — data any local process can already enumerate via
+/// Windows device APIs without elevation — and no pairing keys or other secrets. Encrypting it
+/// would add no protection (a same-user process could decrypt it anyway) while breaking hand
+/// inspection of a portable data file.
 /// </summary>
 public sealed class DeviceCache
 {
@@ -39,7 +45,17 @@ public sealed class DeviceCache
                 var cutoff = DateTime.UtcNow - MaxAge;
                 foreach (var entry in entries ?? [])
                     if (entry.SavedAtUtc >= cutoff && entry.Device.HasBattery)
-                        cache._entries[entry.Device.Id] = entry;
+                    {
+                        // Files written by v0.3.1 may carry a synthetic "Logitech 0xC548 #1" name
+                        // without the flag — re-derive it so a real name can still replace it.
+                        var device = entry.Device;
+                        if (!device.IsFallbackName
+                            && device.Name.StartsWith("Logitech 0x", StringComparison.Ordinal)
+                            && device.Name.Contains(" #"))
+                            device = device with { IsFallbackName = true };
+
+                        cache._entries[device.Id] = entry with { Device = device };
+                    }
             }
         }
         catch
@@ -48,6 +64,21 @@ public sealed class DeviceCache
         }
 
         return cache;
+    }
+
+    /// <summary>
+    /// Swap a provider's synthetic fallback name for the remembered real one under the same id
+    /// (a sleeping device often answers battery but not its name).
+    /// </summary>
+    public DeviceBattery ResolveName(DeviceBattery fresh)
+    {
+        if (!fresh.IsFallbackName
+            || !_entries.TryGetValue(fresh.Id, out var known)
+            || known.Device.IsFallbackName)
+            return fresh;
+
+        DebugLog.Write("cache", $"restored name '{known.Device.Name}' for fallback '{fresh.Name}'");
+        return fresh with { Name = known.Device.Name, IsFallbackName = false };
     }
 
     /// <summary>Remembers every reading that carries a battery value, then saves if anything changed.</summary>

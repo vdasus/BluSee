@@ -28,6 +28,12 @@ public sealed class AppSettings
     /// <summary>Clamped scale factor (0.30 .. 1.00) used by the renderer. Not persisted.</summary>
     public float IconScale => Math.Clamp(IconScalePercent, 30, 100) / 100f;
 
+    /// <summary>
+    /// Debug=on in the ini enables trace logging of every poll (device requests and responses)
+    /// to blusee.log next to the exe. Off by default.
+    /// </summary>
+    public bool Debug { get; set; }
+
     public static AppSettings Load()
     {
         var settings = new AppSettings();
@@ -53,6 +59,8 @@ public sealed class AppSettings
                     else if (key.Equals(nameof(IconScalePercent), StringComparison.OrdinalIgnoreCase)
                         && int.TryParse(value, out var scale))
                         settings.IconScalePercent = scale;
+                    else if (key.Equals(nameof(Debug), StringComparison.OrdinalIgnoreCase))
+                        settings.Debug = value.ToLowerInvariant() is "on" or "true" or "1" or "yes";
                 }
 
                 return settings;
@@ -76,7 +84,9 @@ public sealed class AppSettings
                 $"# BluSee settings{Environment.NewLine}"
                 + $"PollIntervalMinutes={PollIntervalMinutes}{Environment.NewLine}"
                 + $"# Tray digits size in percent (30..100); 100 fills the icon, 90 is 10% smaller.{Environment.NewLine}"
-                + $"IconScalePercent={IconScalePercent}{Environment.NewLine}");
+                + $"IconScalePercent={IconScalePercent}{Environment.NewLine}"
+                + $"# Debug=on traces every poll (device requests/responses) to blusee.log.{Environment.NewLine}"
+                + $"Debug={(Debug ? "on" : "off")}{Environment.NewLine}");
         }
         catch
         {

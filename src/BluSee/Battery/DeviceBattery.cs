@@ -19,13 +19,19 @@ public enum BatterySource
 }
 
 /// <summary>Snapshot of a device and its battery state.</summary>
+/// <remarks>
+/// <see cref="IsFallbackName"/> marks a synthetic provider name (e.g. "Logitech 0xC548 #1" when a
+/// sleeping device answered battery but not its name) so <c>DeviceCache</c> can substitute the
+/// remembered real name instead of overwriting it.
+/// </remarks>
 public sealed record DeviceBattery(
     string Id,
     string Name,
     DeviceTransport Transport,
     int? BatteryPercent,
     bool IsConnected,
-    BatterySource Source)
+    BatterySource Source,
+    bool IsFallbackName = false)
 {
     public bool HasBattery => BatteryPercent is >= 0 and <= 100;
 
