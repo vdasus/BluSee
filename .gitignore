@@ -25,6 +25,10 @@ mono_crash.*
 x64/
 x86/
 [Ww][Ii][Nn]32/
+# The VS template rule above is for Win32 build-output dirs, but it also swallows our
+# Win32 interop source folder — re-include it (directory first, then its contents).
+!src/BluSee/Tray/Win32/
+!src/BluSee/Tray/Win32/**
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
 [Aa][Rr][Mm]64[Ee][Cc]/
