@@ -101,8 +101,10 @@ public sealed partial class TrayApp : IDisposable
             }
             else
             {
+                // Checkmark = connected right now (live reading); unchecked = asleep, on another
+                // host, or a cached value.
                 foreach (var d in devices)
-                    Native.AppendMenuW(menu, Native.MF_STRING, 0, d.Display);
+                    Native.AppendMenuW(menu, Native.MF_STRING | (d.IsConnected ? Native.MF_CHECKED : 0), 0, d.Display);
             }
 
             Native.AppendMenuW(menu, Native.MF_SEPARATOR, 0, null);
