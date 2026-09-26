@@ -7,5 +7,6 @@ set "SDKLIB=C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0"
 set "PATH=%VCDIR%\bin\Hostx64\x64;%PATH%"
 rem Only the onecore flavor of the VC libs is installed; fine for Win10/11 desktop.
 set "LIB=%VCDIR%\lib\onecore\x64;%SDKLIB%\ucrt\x64;%SDKLIB%\um\x64"
-cd /d D:\REPO\Github\BluSee
-dotnet publish src\BluSee -c Release -p:PublishProfile=aot-win-x64 -p:IlcUseEnvironmentalTools=true
+rem Run from the repo root wherever it is checked out; output goes to publish\ (git-ignored).
+cd /d "%~dp0"
+dotnet publish src\BluSee -c Release -r win-x64 -p:PublishAot=true -p:IlcUseEnvironmentalTools=true -o publish

@@ -126,6 +126,10 @@ public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, Ti
 
             cache.Update(merged);
 
+            // User aliases apply after Update, so the persisted Device.Name stays the provider's.
+            for (var i = 0; i < merged.Count; i++)
+                merged[i] = cache.ApplyAlias(merged[i]);
+
             // Re-emit remembered devices this poll did not see (asleep or provider hiccup).
             var seen = merged.Select(d => d.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var cached in cache.Devices)
@@ -133,12 +137,18 @@ public sealed class BatteryMonitor(IReadOnlyList<IBatteryProvider> providers, Ti
                     merged.Add(cached);
         }
 
-        // Dedup by display name, preferring a real battery value over n/a, and a live reading over
-        // a cached (disconnected) one.
+        // Dedup by display name: one physical device may come from several providers under different
+        // ids. Identical models share a name, so within a name keep every entry of the single best
+        // source (most devices, then most battery values, then most live readings) instead of one.
         Current = merged
             .GroupBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.OrderByDescending(d => d.HasBattery).ThenByDescending(d => d.IsConnected).First())
+            .SelectMany(g => g.GroupBy(d => d.Source)
+                .OrderByDescending(s => s.Count())
+                .ThenByDescending(s => s.Count(d => d.HasBattery))
+                .ThenByDescending(s => s.Count(d => d.IsConnected))
+                .First())
             .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(d => d.Id, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         if (DebugLog.Enabled)

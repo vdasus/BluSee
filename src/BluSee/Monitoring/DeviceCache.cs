@@ -5,8 +5,11 @@ using BluSee.Logging;
 
 namespace BluSee.Monitoring;
 
-/// <summary>A device reading together with the time it was taken.</summary>
-public sealed record PersistedDevice(DeviceBattery Device, DateTime SavedAtUtc);
+/// <summary>
+/// A device reading together with the time it was taken. <see cref="Alias"/> is a user-set display
+/// name edited by hand in the json; polls never overwrite it (unlike <c>Device.Name</c>).
+/// </summary>
+public sealed record PersistedDevice(DeviceBattery Device, DateTime SavedAtUtc, string? Alias = null);
 
 /// <summary>
 /// Persists last known battery readings next to the exe, so a freshly started process can list a
@@ -31,7 +34,13 @@ public sealed class DeviceCache
 
     /// <summary>Cached devices, always marked disconnected — only a fresh read proves presence.</summary>
     public IReadOnlyList<DeviceBattery> Devices =>
-        _entries.Values.Select(e => e.Device with { IsConnected = false }).ToList();
+        _entries.Values.Select(e => ApplyAlias(e.Device) with { IsConnected = false }).ToList();
+
+    /// <summary>Replace the device name with the user's alias for its id, if one is set.</summary>
+    public DeviceBattery ApplyAlias(DeviceBattery device)
+        => _entries.TryGetValue(device.Id, out var entry) && !string.IsNullOrWhiteSpace(entry.Alias)
+            ? device with { Name = entry.Alias.Trim(), IsFallbackName = false }
+            : device;
 
     public static DeviceCache Load()
     {
@@ -86,7 +95,8 @@ public sealed class DeviceCache
     {
         foreach (var device in fresh)
             if (device.HasBattery)
-                _entries[device.Id] = new PersistedDevice(device, DateTime.UtcNow);
+                _entries[device.Id] = new PersistedDevice(
+                    device, DateTime.UtcNow, _entries.GetValueOrDefault(device.Id)?.Alias);
         TrySave();
     }
 
