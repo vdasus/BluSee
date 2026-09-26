@@ -3,6 +3,8 @@
 A small Windows tray app that shows the battery level of wireless keyboards and mice.
 The tray icon shows the lowest battery percentage. The menu lists every device.
 
+![BluSee tray icon and menu](docs/screenshot.png)
+
 ## About this project
 
 - I wrote this for my own use, as a personal hobby project.
