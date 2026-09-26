@@ -1,0 +1,32 @@
+name: aot-release
+
+# Builds the NativeAOT exe for an existing tag and attaches it to that tag's GitHub release.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, e.g. v0.3.9
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  aot:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet publish src\BluSee -c Release -r win-x64 -p:PublishAot=true -o publish
+      - shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          $asset = "blusee-$($env:TAG.TrimStart('v'))-win-x64-aot.exe"
+          Copy-Item publish\blusee.exe $asset
+          gh release upload $env:TAG $asset --clobber
