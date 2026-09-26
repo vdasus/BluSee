@@ -66,8 +66,34 @@ Polls do not overwrite `Alias`. Close the app before you edit the file, because 
 
 ## Build
 
+Both builds below produce a single portable `publish\blusee.exe` that needs no installed .NET runtime.
+
+### Trimmed single-file build
+
+Needs only the .NET 10 SDK.
+
 ```
 dotnet publish src\BluSee -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true -o publish
 ```
 
-For a NativeAOT build (smaller exe, needs the MSVC toolchain), see `aot-publish.bat`.
+### NativeAOT build (preferred)
+
+The code compiles ahead of time to native machine code, with no JIT at run time.
+For an app that runs all day in the tray, this gives a lower memory footprint and an instant start.
+The code is kept NativeAOT-compatible: JSON uses source generation, and PnP reads use CfgMgr32 P/Invoke instead of WinRT property lists.
+
+Requirements:
+
+- .NET 10 SDK.
+- MSVC x64 build tools (`link.exe`) and the Windows 10/11 SDK libraries (`ucrt`, `um`).
+- Permission to run `ilc.exe` from the NuGet cache. Group policies on managed machines can block it.
+
+With a standard Visual Studio "Desktop development with C++" install, run the command from a "x64 Native Tools Command Prompt":
+
+```
+dotnet publish src\BluSee -c Release -r win-x64 -p:PublishAot=true -o publish
+```
+
+`aot-publish.bat` does the same for a Visual Studio install that the ILC tool discovery (vswhere) cannot find. It sets `PATH` and `LIB` by hand. Before you run it, check `VCDIR` (MSVC version) and `SDKLIB` (Windows SDK version) against your install.
+
+Release assets state which build they are in the release notes.
