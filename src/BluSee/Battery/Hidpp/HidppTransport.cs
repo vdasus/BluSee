@@ -92,40 +92,54 @@ public sealed class HidppTransport : IAsyncDisposable
     {
         var endpoints = new List<Endpoint>();
         ushort vid = 0, pid = 0;
+        SafeFileHandle? pending = null; // opened but not yet owned by an endpoint
 
-        foreach (var path in group.InterfacePaths)
+        try
         {
-            var handle = NativeHid.CreateFile(
-                path,
-                NativeHid.GenericRead | NativeHid.GenericWrite,
-                NativeHid.FileShareRead | NativeHid.FileShareWrite,
-                IntPtr.Zero, NativeHid.OpenExisting, NativeHid.FileFlagOverlapped, IntPtr.Zero);
-
-            if (handle.IsInvalid)
+            foreach (var path in group.InterfacePaths)
             {
-                handle.Dispose();
-                continue;
-            }
+                var handle = pending = NativeHid.CreateFile(
+                    path,
+                    NativeHid.GenericRead | NativeHid.GenericWrite,
+                    NativeHid.FileShareRead | NativeHid.FileShareWrite,
+                    IntPtr.Zero, NativeHid.OpenExisting, NativeHid.FileFlagOverlapped, IntPtr.Zero);
 
-            var attrs = new NativeHid.HiddAttributes { Size = Marshal.SizeOf<NativeHid.HiddAttributes>() };
-            if (NativeHid.HidD_GetAttributes(handle, ref attrs))
-            {
-                vid = attrs.VendorId;
-                pid = attrs.ProductId;
-            }
+                if (handle.IsInvalid)
+                {
+                    handle.Dispose();
+                    pending = null;
+                    continue;
+                }
 
-            int inLen = 20, outLen = 20;
-            ushort usage = 0;
-            if (NativeHid.TryGetCaps(handle, out var caps))
-            {
-                inLen = caps.InputReportByteLength > 0 ? caps.InputReportByteLength : 20;
-                outLen = caps.OutputReportByteLength > 0 ? caps.OutputReportByteLength : 20;
-                usage = caps.Usage;
-            }
+                var attrs = new NativeHid.HiddAttributes { Size = Marshal.SizeOf<NativeHid.HiddAttributes>() };
+                if (NativeHid.HidD_GetAttributes(handle, ref attrs))
+                {
+                    vid = attrs.VendorId;
+                    pid = attrs.ProductId;
+                }
 
-            NativeHid.HidD_SetNumInputBuffers(handle, 64);
-            var stream = new FileStream(handle, FileAccess.ReadWrite, inLen, isAsync: true);
-            endpoints.Add(new Endpoint(handle, stream, inLen, outLen, usage));
+                int inLen = 20, outLen = 20;
+                ushort usage = 0;
+                if (NativeHid.TryGetCaps(handle, out var caps))
+                {
+                    inLen = caps.InputReportByteLength > 0 ? caps.InputReportByteLength : 20;
+                    outLen = caps.OutputReportByteLength > 0 ? caps.OutputReportByteLength : 20;
+                    usage = caps.Usage;
+                }
+
+                NativeHid.HidD_SetNumInputBuffers(handle, 64);
+                var stream = new FileStream(handle, FileAccess.ReadWrite, inLen, isAsync: true);
+                endpoints.Add(new Endpoint(handle, stream, inLen, outLen, usage));
+                pending = null;
+            }
+        }
+        catch
+        {
+            // don't leak the collections opened before the failure
+            pending?.Dispose();
+            foreach (var ep in endpoints)
+                ep.Stream.Dispose();
+            throw;
         }
 
         if (endpoints.Count == 0)

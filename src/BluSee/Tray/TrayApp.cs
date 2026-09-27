@@ -101,10 +101,10 @@ public sealed partial class TrayApp : IDisposable
             }
             else
             {
-                // Connected devices (live reading, checkmark) first; below a separator, grayed out,
-                // the ones asleep, on another host, or known only from cache.
+                // Connected devices (live reading) first; below a separator, grayed out with their
+                // last known level, the ones asleep, on another host, or known only from cache.
                 foreach (var d in devices.Where(d => d.IsConnected))
-                    Native.AppendMenuW(menu, Native.MF_STRING | Native.MF_CHECKED, 0, d.Display);
+                    Native.AppendMenuW(menu, Native.MF_STRING, 0, d.Display);
 
                 if (devices.Any(d => d.IsConnected) && devices.Any(d => !d.IsConnected))
                     Native.AppendMenuW(menu, Native.MF_SEPARATOR, 0, null);
