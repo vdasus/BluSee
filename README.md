@@ -32,7 +32,7 @@ The app remembers the last reading of each device, so a sleeping device still sh
 
 1. Put `blusee.exe` in any folder where you can write files. The app is portable and keeps all its files next to the exe.
 2. Run the exe. The icon appears in the notification area.
-3. Right-click the icon for the device list (a checkmark marks devices connected right now), Refresh, Poll interval and Start with Windows. A low battery shows a balloon warning.
+3. Right-click the icon for the device list (connected devices first, with a checkmark; disconnected ones grayed out below), Refresh, Poll interval and Start with Windows. A low battery shows a balloon warning.
 
 ### Files next to the exe
 
