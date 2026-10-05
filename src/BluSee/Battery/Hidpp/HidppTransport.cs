@@ -24,9 +24,9 @@ public sealed class HidppTransport : IAsyncDisposable
     public const byte ShortReportId = 0x10;
     public const byte LongReportId = 0x11;
 
-    // The receiver sometimes holds an output write for tens of seconds (observed 3..61 s in debug
-    // logs, apparently while it retries reaching a sleeping device). Cap it: a request whose write
-    // cannot complete quickly is treated as unanswered instead of stalling the whole poll.
+    // Safety cap on a single output write: a request whose write cannot complete is treated as
+    // unanswered instead of stalling the whole poll. (The multi-second "receiver stalls" seen in
+    // earlier logs were the buffered-FileStream bug noted in OpenAsync, not the receiver.)
     private static readonly TimeSpan WriteTimeout = TimeSpan.FromSeconds(3);
 
     private sealed record Endpoint(SafeFileHandle Handle, FileStream Stream, int InLength, int OutLength, ushort Usage);
@@ -131,7 +131,10 @@ public sealed class HidppTransport : IAsyncDisposable
                 }
 
                 NativeHid.HidD_SetNumInputBuffers(handle, 64);
-                var stream = new FileStream(handle, FileAccess.ReadWrite, inLen, isAsync: true);
+                // bufferSize 0 is essential: a buffered FileStream serializes ReadAsync/WriteAsync on one
+                // semaphore, so with the read loop always pending, every write waited for the next
+                // incoming report (seconds on a quiet receiver) and looked like a receiver stall.
+                var stream = new FileStream(handle, FileAccess.ReadWrite, bufferSize: 0, isAsync: true);
                 endpoints.Add(new Endpoint(handle, stream, inLen, outLen, usage));
                 pending = null;
             }
