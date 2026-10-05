@@ -26,7 +26,7 @@ The app remembers the last reading of each device, so a sleeping device still sh
 ## Requirements
 
 - Windows 10 (19041) or later, x64.
-- The release `blusee.exe` is self-contained. It does not need an installed .NET runtime.
+- The release `blusee.exe` is a self-contained NativeAOT build. It does not need an installed .NET runtime.
 
 ## Usage
 
@@ -66,19 +66,7 @@ Polls do not overwrite `Alias`. Close the app before you edit the file, because 
 
 ## Build
 
-Both builds below produce a single portable `publish\blusee.exe` that needs no installed .NET runtime.
-
-### Trimmed single-file build
-
-Needs only the .NET 10 SDK.
-
-```
-dotnet publish src\BluSee -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:PublishTrimmed=true -p:EnableCompressionInSingleFile=true -o publish
-```
-
-### NativeAOT build (preferred)
-
-The code compiles ahead of time to native machine code, with no JIT at run time.
+The release `blusee.exe` is a NativeAOT build: native machine code with no JIT at run time.
 For an app that runs all day in the tray, this gives a lower memory footprint and an instant start.
 The code is kept NativeAOT-compatible: JSON uses source generation, and PnP reads use CfgMgr32 P/Invoke instead of WinRT property lists.
 
@@ -96,4 +84,3 @@ dotnet publish src\BluSee -c Release -r win-x64 -p:PublishAot=true -o publish
 
 `aot-publish.bat` does the same for a Visual Studio install that the ILC tool discovery (vswhere) cannot find. It sets `PATH` and `LIB` by hand. Before you run it, check `VCDIR` (MSVC version) and `SDKLIB` (Windows SDK version) against your install.
 
-Release assets state which build they are in the release notes.
