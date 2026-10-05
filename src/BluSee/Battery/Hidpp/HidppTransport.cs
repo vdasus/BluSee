@@ -57,6 +57,9 @@ public sealed class HidppTransport : IAsyncDisposable
     /// client stop probing a receiver whose RF buffer is clogged (e.g. retrying a sleeping device).</summary>
     public int ConsecutiveWriteTimeouts { get; private set; }
 
+    /// <summary>All write timeouts since this transport was opened (one transport = one poll).</summary>
+    public int TotalWriteTimeouts { get; private set; }
+
     /// <summary>Enumerate Logitech HID++ vendor collections and group them per receiver.</summary>
     public static async Task<IReadOnlyList<HidppReceiverGroup>> FindReceiverGroupsAsync(CancellationToken ct)
     {
@@ -171,6 +174,7 @@ public sealed class HidppTransport : IAsyncDisposable
             {
                 LastWriteTimedOut = true;
                 ConsecutiveWriteTimeouts++;
+                TotalWriteTimeouts++;
                 if (DebugLog.Enabled)
                     DebugLog.Write("hidpp", $"TX write timeout ({WriteTimeout.TotalSeconds:0} s, {ConsecutiveWriteTimeouts} in a row) for {DebugLog.Hex(frame)}");
                 return null; // receiver refused to take the frame in time — treat as no reply

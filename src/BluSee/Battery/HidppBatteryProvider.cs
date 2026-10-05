@@ -25,6 +25,16 @@ public sealed class HidppBatteryProvider : IBatteryProvider
     // buffer is busy (each empty-slot frame still has to be accepted). A full 1..6 rescan runs
     // every FullScanEvery-th poll to pick up newly paired devices.
     private readonly Dictionary<string, HashSet<byte>> _knownSlots = new(StringComparer.OrdinalIgnoreCase);
+
+    // Receivers whose last full scan hit write timeouts: a stalled write says nothing about the slot
+    // (the RF queue is shared), so a paired device may have been skipped. Such a scan is inconclusive
+    // and is repeated next poll instead of waiting FullScanEvery polls with that device unprobed.
+    private readonly HashSet<string> _inconclusiveScan = new(StringComparer.OrdinalIgnoreCase);
+
+    // Consecutive polls each cached device went unanswered. Write stalls are receiver-wide, so one
+    // miss is noise (the device is often in active use); only a repeated miss marks it disconnected.
+    private readonly Dictionary<string, int> _misses = new(StringComparer.OrdinalIgnoreCase);
+    private const int MissesBeforeDisconnected = 2;
     private const int FullScanEvery = 6;
     private int _pollCount;
 
@@ -75,12 +85,22 @@ public sealed class HidppBatteryProvider : IBatteryProvider
             bool NeedName(byte slot) => !_names.ContainsKey($"{group.Key}#dev{slot}");
 
             var known = _knownSlots.GetValueOrDefault(group.Key);
-            var fullScan = known is null || known.Count == 0 || _pollCount % FullScanEvery == 1;
+            var fullScan = known is null || known.Count == 0 || _pollCount % FullScanEvery == 1
+                || _inconclusiveScan.Contains(group.Key);
             IReadOnlyList<HidppBatteryReading> readings;
             if (fullScan)
             {
                 DebugLog.Write("hidpp", "full slot scan (1..6)");
                 readings = await client.ReadSlotsAsync([1, 2, 3, 4, 5, 6], allowDirectFallback: true, NeedName, ct);
+                if (transport.TotalWriteTimeouts > 0)
+                {
+                    _inconclusiveScan.Add(group.Key);
+                    DebugLog.Write("hidpp", $"full scan inconclusive ({transport.TotalWriteTimeouts} write timeout(s)), rescanning next poll");
+                }
+                else
+                {
+                    _inconclusiveScan.Remove(group.Key);
+                }
             }
             else
             {
@@ -120,12 +140,18 @@ public sealed class HidppBatteryProvider : IBatteryProvider
 
         // Merge: refresh the cache with this poll, and re-emit cached devices that were silent now.
         foreach (var (id, device) in fresh)
+        {
             _cache[id] = device;
+            _misses.Remove(id);
+        }
 
         var result = new List<DeviceBattery>(fresh.Values);
         foreach (var (id, cached) in _cache)
             if (!fresh.ContainsKey(id))
-                result.Add(cached with { IsConnected = false });
+            {
+                var misses = _misses[id] = _misses.GetValueOrDefault(id) + 1;
+                result.Add(cached with { IsConnected = misses < MissesBeforeDisconnected });
+            }
 
         return result;
     }
