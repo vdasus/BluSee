@@ -84,7 +84,6 @@ dotnet publish src\BluSee -c Release -r win-x64 -p:PublishAot=true -o publish
 
 `aot-publish.bat` does the same for a Visual Studio install that the ILC tool discovery (vswhere) cannot find. It sets `PATH` and `LIB` by hand. Before you run it, check `VCDIR` (MSVC version) and `SDKLIB` (Windows SDK version) against your install.
 
-
 Without the MSVC toolchain, a trimmed single-file build needs only the .NET 10 SDK. It is larger (about 12 MB) and uses more memory than the NativeAOT build:
 
 ```
